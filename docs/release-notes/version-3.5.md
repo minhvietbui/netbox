@@ -2,6 +2,34 @@
 
 ## v3.5.1 (FUTURE)
 
+## Enhancements
+
+* [#10759](https://github.com/netbox-community/netbox/issues/10759) - Support Markdown rendering for custom field descriptions
+* [#11422](https://github.com/netbox-community/netbox/issues/11422) - Match on power panel name when searching for power feeds
+* [#11504](https://github.com/netbox-community/netbox/issues/11504) - Add filter to select individual racks under rack elevations view
+* [#11652](https://github.com/netbox-community/netbox/issues/11652) - Add a module status column to module bay tables
+* [#11791](https://github.com/netbox-community/netbox/issues/11791) - Enable configuration of custom database backend via `ENGINE` parameter
+* [#11190](https://github.com/netbox-community/netbox/issues/11190) - Including systemd service & timer configurations for housekeeping tasks
+
+### Bug Fixes
+
+* [#10757](https://github.com/netbox-community/netbox/issues/10757) - Simplify IP address interface and NAT IP assignment form fields to avoid confusion
+* [#12363](https://github.com/netbox-community/netbox/issues/12363) - Fix whitespace for paragraph elements in Markdown-rendered table columns
+* [#12367](https://github.com/netbox-community/netbox/issues/12367) - Fix `RelatedObjectDoesNotExist` exception under certain conditions (regression from #11550)
+* [#12380](https://github.com/netbox-community/netbox/issues/12380) - Allow selecting object change as model under object list widget configuration
+* [#12384](https://github.com/netbox-community/netbox/issues/12384) - Add a three-second timeout for RSS reader widget
+* [#12395](https://github.com/netbox-community/netbox/issues/12395) - Fix "create & add another" action for objects with custom fields
+* [#12396](https://github.com/netbox-community/netbox/issues/12396) - Provider account should not be a required field in REST API serializer
+* [#12400](https://github.com/netbox-community/netbox/issues/12400) - Validate default values for object and multi-object custom fields
+* [#12401](https://github.com/netbox-community/netbox/issues/12401) - Support the creation of front ports without a pre-populated device ID
+* [#12405](https://github.com/netbox-community/netbox/issues/12405) - Fix filtering for VLAN groups displayed under site view
+* [#12410](https://github.com/netbox-community/netbox/issues/12410) - Fix base path for OpenAPI schema (fixes Swagger UI requests)
+* [#12412](https://github.com/netbox-community/netbox/issues/12412) - Device/VM interface MAC addresses can be nullified via REST API
+* [#12415](https://github.com/netbox-community/netbox/issues/12415) - Fix `ImportError` exception when running RQ worker
+* [#12433](https://github.com/netbox-community/netbox/issues/12433) - Correct the application of URL query parameters for object list dashboard widgets
+* [#12436](https://github.com/netbox-community/netbox/issues/12436) - Remove extraneous "add" button from contact assignments list
+* [#12464](https://github.com/netbox-community/netbox/issues/12464) - Apply credentials for git data source only when connecting via HTTP/S
+
 ---
 
 ## v3.5.0 (2023-04-27)
