@@ -1,20 +1,26 @@
-from django import forms
-from django.contrib.contenttypes.models import ContentType
-from django.contrib.postgres.forms import SimpleArrayField
-from django.utils.safestring import mark_safe
-from django.utils.translation import gettext as _
+import re
 
-from extras.choices import CustomFieldVisibilityChoices, CustomFieldTypeChoices, JournalEntryKindChoices
+from django import forms
+from django.contrib.postgres.forms import SimpleArrayField
+from django.core.exceptions import ObjectDoesNotExist
+from django.utils.safestring import mark_safe
+from django.utils.translation import gettext_lazy as _
+
+from core.models import ContentType
+from extras.choices import *
 from extras.models import *
-from extras.utils import FeatureQuery
 from netbox.forms import NetBoxModelImportForm
 from utilities.forms import CSVModelForm
-from utilities.forms.fields import CSVChoiceField, CSVContentTypeField, CSVMultipleContentTypeField, SlugField
+from utilities.forms.fields import (
+    CSVChoiceField, CSVContentTypeField, CSVModelChoiceField, CSVMultipleContentTypeField, SlugField,
+)
 
 __all__ = (
     'ConfigTemplateImportForm',
+    'CustomFieldChoiceSetImportForm',
     'CustomFieldImportForm',
     'CustomLinkImportForm',
+    'EventRuleImportForm',
     'ExportTemplateImportForm',
     'JournalEntryImportForm',
     'SavedFilterImportForm',
@@ -25,44 +31,96 @@ __all__ = (
 
 class CustomFieldImportForm(CSVModelForm):
     content_types = CSVMultipleContentTypeField(
-        queryset=ContentType.objects.all(),
-        limit_choices_to=FeatureQuery('custom_fields'),
+        label=_('Content types'),
+        queryset=ContentType.objects.with_feature('custom_fields'),
         help_text=_("One or more assigned object types")
     )
     type = CSVChoiceField(
+        label=_('Type'),
         choices=CustomFieldTypeChoices,
         help_text=_('Field data type (e.g. text, integer, etc.)')
     )
     object_type = CSVContentTypeField(
-        queryset=ContentType.objects.all(),
-        limit_choices_to=FeatureQuery('custom_fields'),
+        label=_('Object type'),
+        queryset=ContentType.objects.public(),
         required=False,
         help_text=_("Object type (for object or multi-object fields)")
     )
-    choices = SimpleArrayField(
-        base_field=forms.CharField(),
+    choice_set = CSVModelChoiceField(
+        label=_('Choice set'),
+        queryset=CustomFieldChoiceSet.objects.all(),
+        to_field_name='name',
         required=False,
-        help_text=_('Comma-separated list of field choices')
+        help_text=_('Choice set (for selection fields)')
     )
-    ui_visibility = CSVChoiceField(
-        choices=CustomFieldVisibilityChoices,
-        help_text=_('How the custom field is displayed in the user interface')
+    ui_visible = CSVChoiceField(
+        label=_('UI visible'),
+        choices=CustomFieldUIVisibleChoices,
+        required=False,
+        help_text=_('Whether the custom field is displayed in the UI')
+    )
+    ui_editable = CSVChoiceField(
+        label=_('UI editable'),
+        choices=CustomFieldUIEditableChoices,
+        required=False,
+        help_text=_('Whether the custom field is editable in the UI')
     )
 
     class Meta:
         model = CustomField
         fields = (
             'name', 'label', 'group_name', 'type', 'content_types', 'object_type', 'required', 'description',
-            'search_weight', 'filter_logic', 'default', 'choices', 'weight', 'validation_minimum', 'validation_maximum',
-            'validation_regex', 'ui_visibility', 'is_cloneable',
+            'search_weight', 'filter_logic', 'default', 'choice_set', 'weight', 'validation_minimum',
+            'validation_maximum', 'validation_regex', 'ui_visible', 'ui_editable', 'is_cloneable',
         )
+
+
+class CustomFieldChoiceSetImportForm(CSVModelForm):
+    base_choices = CSVChoiceField(
+        choices=CustomFieldChoiceSetBaseChoices,
+        required=False,
+        help_text=_('The base set of predefined choices to use (if any)')
+    )
+    extra_choices = SimpleArrayField(
+        base_field=forms.CharField(),
+        required=False,
+        help_text=_(
+            'Quoted string of comma-separated field choices with optional labels separated by colon: '
+            '"choice1:First Choice,choice2:Second Choice"'
+        )
+    )
+
+    class Meta:
+        model = CustomFieldChoiceSet
+        fields = (
+            'name', 'description', 'extra_choices', 'order_alphabetically',
+        )
+
+    def clean_extra_choices(self):
+        if isinstance(self.cleaned_data['extra_choices'], list):
+            data = []
+            for line in self.cleaned_data['extra_choices']:
+                try:
+                    value, label = re.split(r'(?<!\\):', line, maxsplit=1)
+                    value = value.replace('\\:', ':')
+                    label = label.replace('\\:', ':')
+                except ValueError:
+                    value, label = line, line
+                data.append((value, label))
+            return data
 
 
 class CustomLinkImportForm(CSVModelForm):
     content_types = CSVMultipleContentTypeField(
-        queryset=ContentType.objects.all(),
-        limit_choices_to=FeatureQuery('custom_links'),
+        label=_('Content types'),
+        queryset=ContentType.objects.with_feature('custom_links'),
         help_text=_("One or more assigned object types")
+    )
+    button_class = CSVChoiceField(
+        label=_('button class'),
+        required=False,
+        choices=CustomLinkButtonClassChoices,
+        help_text=_('The class of the first link in a group will be used for the dropdown button')
     )
 
     class Meta:
@@ -75,8 +133,8 @@ class CustomLinkImportForm(CSVModelForm):
 
 class ExportTemplateImportForm(CSVModelForm):
     content_types = CSVMultipleContentTypeField(
-        queryset=ContentType.objects.all(),
-        limit_choices_to=FeatureQuery('export_templates'),
+        label=_('Content types'),
+        queryset=ContentType.objects.with_feature('export_templates'),
         help_text=_("One or more assigned object types")
     )
 
@@ -98,6 +156,7 @@ class ConfigTemplateImportForm(CSVModelForm):
 
 class SavedFilterImportForm(CSVModelForm):
     content_types = CSVMultipleContentTypeField(
+        label=_('Content types'),
         queryset=ContentType.objects.all(),
         help_text=_("One or more assigned object types")
     )
@@ -109,20 +168,61 @@ class SavedFilterImportForm(CSVModelForm):
         )
 
 
-class WebhookImportForm(CSVModelForm):
-    content_types = CSVMultipleContentTypeField(
-        queryset=ContentType.objects.all(),
-        limit_choices_to=FeatureQuery('webhooks'),
-        help_text=_("One or more assigned object types")
-    )
+class WebhookImportForm(NetBoxModelImportForm):
 
     class Meta:
         model = Webhook
         fields = (
-            'name', 'enabled', 'content_types', 'type_create', 'type_update', 'type_delete', 'type_job_start',
-            'type_job_end', 'payload_url', 'http_method', 'http_content_type', 'additional_headers', 'body_template',
-            'secret', 'ssl_verification', 'ca_file_path'
+            'name', 'payload_url', 'http_method', 'http_content_type', 'additional_headers', 'body_template',
+            'secret', 'ssl_verification', 'ca_file_path', 'description', 'tags'
         )
+
+
+class EventRuleImportForm(NetBoxModelImportForm):
+    content_types = CSVMultipleContentTypeField(
+        label=_('Content types'),
+        queryset=ContentType.objects.with_feature('event_rules'),
+        help_text=_("One or more assigned object types")
+    )
+    action_object = forms.CharField(
+        label=_('Action object'),
+        required=True,
+        help_text=_('Webhook name or script as dotted path module.Class')
+    )
+
+    class Meta:
+        model = EventRule
+        fields = (
+            'name', 'description', 'enabled', 'conditions', 'content_types', 'type_create', 'type_update',
+            'type_delete', 'type_job_start', 'type_job_end', 'action_type', 'action_object', 'comments', 'tags'
+        )
+
+    def clean(self):
+        super().clean()
+
+        action_object = self.cleaned_data.get('action_object')
+        action_type = self.cleaned_data.get('action_type')
+        if action_object and action_type:
+            # Webhook
+            if action_type == EventRuleActionChoices.WEBHOOK:
+                try:
+                    webhook = Webhook.objects.get(name=action_object)
+                except Webhook.DoesNotExist:
+                    raise forms.ValidationError(_("Webhook {name} not found").format(name=action_object))
+                self.instance.action_object = webhook
+            # Script
+            elif action_type == EventRuleActionChoices.SCRIPT:
+                from extras.scripts import get_module_and_script
+                module_name, script_name = action_object.split('.', 1)
+                try:
+                    module, script = get_module_and_script(module_name, script_name)
+                except ObjectDoesNotExist:
+                    raise forms.ValidationError(_("Script {name} not found").format(name=action_object))
+                self.instance.action_object = module
+                self.instance.action_object_type = ContentType.objects.get_for_model(module, for_concrete_model=False)
+                self.instance.action_parameters = {
+                    'script_name': script_name,
+                }
 
 
 class TagImportForm(CSVModelForm):
@@ -132,7 +232,7 @@ class TagImportForm(CSVModelForm):
         model = Tag
         fields = ('name', 'slug', 'color', 'description')
         help_texts = {
-            'color': mark_safe(_('RGB color in hexadecimal (e.g. <code>00ff00</code>)')),
+            'color': mark_safe(_('RGB color in hexadecimal. Example:') + ' <code>00ff00</code>'),
         }
 
 
@@ -142,6 +242,7 @@ class JournalEntryImportForm(NetBoxModelImportForm):
         label=_('Assigned object type'),
     )
     kind = CSVChoiceField(
+        label=_('Kind'),
         choices=JournalEntryKindChoices,
         help_text=_('The classification of entry')
     )

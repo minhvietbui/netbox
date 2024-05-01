@@ -2,8 +2,8 @@ import decimal
 
 from django.contrib.contenttypes.models import ContentType
 from django.utils.translation import gettext as _
-from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from timezone_field.rest_framework import TimeZoneSerializerField
 
@@ -12,8 +12,7 @@ from dcim.constants import *
 from dcim.models import *
 from extras.api.nested_serializers import NestedConfigTemplateSerializer
 from ipam.api.nested_serializers import (
-    NestedASNSerializer, NestedIPAddressSerializer, NestedL2VPNTerminationSerializer, NestedVLANSerializer,
-    NestedVRFSerializer,
+    NestedASNSerializer, NestedIPAddressSerializer, NestedVLANSerializer, NestedVRFSerializer,
 )
 from ipam.models import ASN, VLAN
 from netbox.api.fields import ChoiceField, ContentTypeField, SerializedPKRelatedField
@@ -27,6 +26,7 @@ from tenancy.api.nested_serializers import NestedTenantSerializer
 from users.api.nested_serializers import NestedUserSerializer
 from utilities.api import get_serializer_for_model
 from virtualization.api.nested_serializers import NestedClusterSerializer
+from vpn.api.nested_serializers import NestedL2VPNTerminationSerializer
 from wireless.api.nested_serializers import NestedWirelessLANSerializer, NestedWirelessLinkSerializer
 from wireless.choices import *
 from wireless.models import WirelessLAN
@@ -214,9 +214,9 @@ class RackSerializer(NetBoxModelSerializer):
         model = Rack
         fields = [
             'id', 'url', 'display', 'name', 'facility_id', 'site', 'location', 'tenant', 'status', 'role', 'serial',
-            'asset_tag', 'type', 'width', 'u_height', 'weight', 'max_weight', 'weight_unit', 'desc_units',
-            'outer_width', 'outer_depth', 'outer_unit', 'mounting_depth', 'description', 'comments', 'tags',
-            'custom_fields', 'created', 'last_updated', 'device_count', 'powerfeed_count',
+            'asset_tag', 'type', 'width', 'u_height', 'starting_unit', 'weight', 'max_weight', 'weight_unit',
+            'desc_units', 'outer_width', 'outer_depth', 'outer_unit', 'mounting_depth', 'description', 'comments',
+            'tags', 'custom_fields', 'created', 'last_updated', 'device_count', 'powerfeed_count',
         ]
 
 
@@ -326,13 +326,31 @@ class DeviceTypeSerializer(NetBoxModelSerializer):
     airflow = ChoiceField(choices=DeviceAirflowChoices, allow_blank=True, required=False, allow_null=True)
     weight_unit = ChoiceField(choices=WeightUnitChoices, allow_blank=True, required=False, allow_null=True)
     device_count = serializers.IntegerField(read_only=True)
+    front_image = serializers.ImageField(required=False, allow_null=True)
+    rear_image = serializers.ImageField(required=False, allow_null=True)
+
+    # Counter fields
+    console_port_template_count = serializers.IntegerField(read_only=True)
+    console_server_port_template_count = serializers.IntegerField(read_only=True)
+    power_port_template_count = serializers.IntegerField(read_only=True)
+    power_outlet_template_count = serializers.IntegerField(read_only=True)
+    interface_template_count = serializers.IntegerField(read_only=True)
+    front_port_template_count = serializers.IntegerField(read_only=True)
+    rear_port_template_count = serializers.IntegerField(read_only=True)
+    device_bay_template_count = serializers.IntegerField(read_only=True)
+    module_bay_template_count = serializers.IntegerField(read_only=True)
+    inventory_item_template_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = DeviceType
         fields = [
-            'id', 'url', 'display', 'manufacturer', 'default_platform', 'model', 'slug', 'part_number', 'u_height', 'is_full_depth',
-            'subdevice_role', 'airflow', 'weight', 'weight_unit', 'front_image', 'rear_image', 'description',
-            'comments', 'tags', 'custom_fields', 'created', 'last_updated', 'device_count',
+            'id', 'url', 'display', 'manufacturer', 'default_platform', 'model', 'slug', 'part_number', 'u_height',
+            'exclude_from_utilization', 'is_full_depth', 'subdevice_role', 'airflow', 'weight', 'weight_unit',
+            'front_image', 'rear_image', 'description', 'comments', 'tags', 'custom_fields', 'created', 'last_updated',
+            'device_count', 'console_port_template_count', 'console_server_port_template_count', 'power_port_template_count',
+            'power_outlet_template_count', 'interface_template_count', 'front_port_template_count',
+            'rear_port_template_count', 'device_bay_template_count', 'module_bay_template_count',
+            'inventory_item_template_count',
         ]
 
 
@@ -498,12 +516,18 @@ class InterfaceTemplateSerializer(ValidatedModelSerializer):
         allow_blank=True,
         allow_null=True
     )
+    rf_role = ChoiceField(
+        choices=WirelessRoleChoices,
+        required=False,
+        allow_blank=True,
+        allow_null=True
+    )
 
     class Meta:
         model = InterfaceTemplate
         fields = [
             'id', 'url', 'display', 'device_type', 'module_type', 'name', 'label', 'type', 'enabled', 'mgmt_only',
-            'description', 'bridge', 'poe_mode', 'poe_type', 'created', 'last_updated',
+            'description', 'bridge', 'poe_mode', 'poe_type', 'rf_role', 'created', 'last_updated',
         ]
 
 
@@ -588,7 +612,7 @@ class InventoryItemTemplateSerializer(ValidatedModelSerializer):
         required=False,
         allow_null=True
     )
-    component = serializers.SerializerMethodField(read_only=True)
+    component = serializers.SerializerMethodField(read_only=True, allow_null=True)
     _depth = serializers.IntegerField(source='level', read_only=True)
 
     class Meta:
@@ -635,15 +659,16 @@ class PlatformSerializer(NetBoxModelSerializer):
     class Meta:
         model = Platform
         fields = [
-            'id', 'url', 'display', 'name', 'slug', 'manufacturer', 'config_template', 'napalm_driver', 'napalm_args',
-            'description', 'tags', 'custom_fields', 'created', 'last_updated', 'device_count', 'virtualmachine_count',
+            'id', 'url', 'display', 'name', 'slug', 'manufacturer', 'config_template', 'description', 'tags',
+            'custom_fields', 'created', 'last_updated', 'device_count', 'virtualmachine_count',
         ]
 
 
 class DeviceSerializer(NetBoxModelSerializer):
     url = serializers.HyperlinkedIdentityField(view_name='dcim-api:device-detail')
     device_type = NestedDeviceTypeSerializer()
-    device_role = NestedDeviceRoleSerializer()
+    role = NestedDeviceRoleSerializer()
+    device_role = NestedDeviceRoleSerializer(read_only=True, help_text=_('Deprecated in v3.6 in favor of `role`.'))
     tenant = NestedTenantSerializer(required=False, allow_null=True, default=None)
     platform = NestedPlatformSerializer(required=False, allow_null=True)
     site = NestedSiteSerializer()
@@ -660,22 +685,38 @@ class DeviceSerializer(NetBoxModelSerializer):
     )
     status = ChoiceField(choices=DeviceStatusChoices, required=False)
     airflow = ChoiceField(choices=DeviceAirflowChoices, allow_blank=True, required=False)
-    primary_ip = NestedIPAddressSerializer(read_only=True)
+    primary_ip = NestedIPAddressSerializer(read_only=True, allow_null=True)
     primary_ip4 = NestedIPAddressSerializer(required=False, allow_null=True)
     primary_ip6 = NestedIPAddressSerializer(required=False, allow_null=True)
+    oob_ip = NestedIPAddressSerializer(required=False, allow_null=True)
     parent_device = serializers.SerializerMethodField()
     cluster = NestedClusterSerializer(required=False, allow_null=True)
     virtual_chassis = NestedVirtualChassisSerializer(required=False, allow_null=True, default=None)
     vc_position = serializers.IntegerField(allow_null=True, max_value=255, min_value=0, default=None)
     config_template = NestedConfigTemplateSerializer(required=False, allow_null=True, default=None)
 
+    # Counter fields
+    console_port_count = serializers.IntegerField(read_only=True)
+    console_server_port_count = serializers.IntegerField(read_only=True)
+    power_port_count = serializers.IntegerField(read_only=True)
+    power_outlet_count = serializers.IntegerField(read_only=True)
+    interface_count = serializers.IntegerField(read_only=True)
+    front_port_count = serializers.IntegerField(read_only=True)
+    rear_port_count = serializers.IntegerField(read_only=True)
+    device_bay_count = serializers.IntegerField(read_only=True)
+    module_bay_count = serializers.IntegerField(read_only=True)
+    inventory_item_count = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = Device
         fields = [
-            'id', 'url', 'display', 'name', 'device_type', 'device_role', 'tenant', 'platform', 'serial', 'asset_tag',
-            'site', 'location', 'rack', 'position', 'face', 'parent_device', 'status', 'airflow', 'primary_ip',
-            'primary_ip4', 'primary_ip6', 'cluster', 'virtual_chassis', 'vc_position', 'vc_priority', 'description',
-            'comments', 'config_template', 'local_context_data', 'tags', 'custom_fields', 'created', 'last_updated',
+            'id', 'url', 'display', 'name', 'device_type', 'role', 'device_role', 'tenant', 'platform', 'serial',
+            'asset_tag', 'site', 'location', 'rack', 'position', 'face', 'latitude', 'longitude', 'parent_device',
+            'status', 'airflow', 'primary_ip', 'primary_ip4', 'primary_ip6', 'oob_ip', 'cluster', 'virtual_chassis',
+            'vc_position', 'vc_priority', 'description', 'comments', 'config_template', 'local_context_data', 'tags',
+            'custom_fields', 'created', 'last_updated', 'console_port_count', 'console_server_port_count',
+            'power_port_count', 'power_outlet_count', 'interface_count', 'front_port_count', 'rear_port_count',
+            'device_bay_count', 'module_bay_count', 'inventory_item_count',
         ]
 
     @extend_schema_field(NestedDeviceSerializer)
@@ -689,16 +730,22 @@ class DeviceSerializer(NetBoxModelSerializer):
         data['device_bay'] = NestedDeviceBaySerializer(instance=device_bay, context=context).data
         return data
 
+    def get_device_role(self, obj):
+        return obj.role
+
 
 class DeviceWithConfigContextSerializer(DeviceSerializer):
-    config_context = serializers.SerializerMethodField(read_only=True)
+    config_context = serializers.SerializerMethodField(read_only=True, allow_null=True)
 
     class Meta(DeviceSerializer.Meta):
         fields = [
-            'id', 'url', 'display', 'name', 'device_type', 'device_role', 'tenant', 'platform', 'serial', 'asset_tag',
-            'site', 'location', 'rack', 'position', 'face', 'parent_device', 'status', 'airflow', 'primary_ip',
-            'primary_ip4', 'primary_ip6', 'cluster', 'virtual_chassis', 'vc_position', 'vc_priority', 'description',
-            'comments', 'local_context_data', 'tags', 'custom_fields', 'config_context', 'created', 'last_updated',
+            'id', 'url', 'display', 'name', 'device_type', 'role', 'device_role', 'tenant', 'platform', 'serial',
+            'asset_tag', 'site', 'location', 'rack', 'position', 'face', 'latitude', 'longitude', 'parent_device',
+            'status', 'airflow', 'primary_ip', 'primary_ip4', 'primary_ip6', 'oob_ip', 'cluster', 'virtual_chassis',
+            'vc_position', 'vc_priority', 'description', 'comments', 'config_template', 'config_context',
+            'local_context_data', 'tags', 'custom_fields', 'created', 'last_updated', 'console_port_count',
+            'console_server_port_count', 'power_port_count', 'power_outlet_count', 'interface_count',
+            'front_port_count', 'rear_port_count', 'device_bay_count', 'module_bay_count', 'inventory_item_count',
         ]
 
     @extend_schema_field(serializers.JSONField(allow_null=True))
@@ -707,12 +754,13 @@ class DeviceWithConfigContextSerializer(DeviceSerializer):
 
 
 class VirtualDeviceContextSerializer(NetBoxModelSerializer):
-    url = serializers.HyperlinkedIdentityField(view_name='dcim-api:device-detail')
+    url = serializers.HyperlinkedIdentityField(view_name='dcim-api:virtualdevicecontext-detail')
     device = NestedDeviceSerializer()
     tenant = NestedTenantSerializer(required=False, allow_null=True, default=None)
     primary_ip = NestedIPAddressSerializer(read_only=True, allow_null=True)
     primary_ip4 = NestedIPAddressSerializer(required=False, allow_null=True)
     primary_ip6 = NestedIPAddressSerializer(required=False, allow_null=True)
+    status = ChoiceField(choices=VirtualDeviceContextStatusChoices)
 
     # Related object counts
     interface_count = serializers.IntegerField(read_only=True)
@@ -739,10 +787,6 @@ class ModuleSerializer(NetBoxModelSerializer):
             'id', 'url', 'display', 'device', 'module_bay', 'module_type', 'status', 'serial', 'asset_tag',
             'description', 'comments', 'tags', 'custom_fields', 'created', 'last_updated',
         ]
-
-
-class DeviceNAPALMSerializer(serializers.Serializer):
-    method = serializers.JSONField()
 
 
 #
@@ -880,12 +924,12 @@ class InterfaceSerializer(NetBoxModelSerializer, CabledObjectSerializer, Connect
     parent = NestedInterfaceSerializer(required=False, allow_null=True)
     bridge = NestedInterfaceSerializer(required=False, allow_null=True)
     lag = NestedInterfaceSerializer(required=False, allow_null=True)
-    mode = ChoiceField(choices=InterfaceModeChoices, required=False, allow_blank=True, allow_null=True)
+    mode = ChoiceField(choices=InterfaceModeChoices, required=False, allow_blank=True)
     duplex = ChoiceField(choices=InterfaceDuplexChoices, required=False, allow_blank=True, allow_null=True)
-    rf_role = ChoiceField(choices=WirelessRoleChoices, required=False, allow_blank=True, allow_null=True)
-    rf_channel = ChoiceField(choices=WirelessChannelChoices, required=False, allow_blank=True, allow_null=True)
-    poe_mode = ChoiceField(choices=InterfacePoEModeChoices, required=False, allow_blank=True, allow_null=True)
-    poe_type = ChoiceField(choices=InterfacePoETypeChoices, required=False, allow_blank=True, allow_null=True)
+    rf_role = ChoiceField(choices=WirelessRoleChoices, required=False, allow_blank=True)
+    rf_channel = ChoiceField(choices=WirelessChannelChoices, required=False, allow_blank=True)
+    poe_mode = ChoiceField(choices=InterfacePoEModeChoices, required=False, allow_blank=True)
+    poe_type = ChoiceField(choices=InterfacePoETypeChoices, required=False, allow_blank=True)
     untagged_vlan = NestedVLANSerializer(required=False, allow_null=True)
     tagged_vlans = SerializedPKRelatedField(
         queryset=VLAN.objects.all(),
@@ -907,9 +951,10 @@ class InterfaceSerializer(NetBoxModelSerializer, CabledObjectSerializer, Connect
     mac_address = serializers.CharField(
         required=False,
         default=None,
+        allow_blank=True,
         allow_null=True
     )
-    wwn = serializers.CharField(required=False, default=None)
+    wwn = serializers.CharField(required=False, default=None, allow_blank=True, allow_null=True)
 
     class Meta:
         model = Interface
@@ -993,8 +1038,8 @@ class ModuleBaySerializer(NetBoxModelSerializer):
     class Meta:
         model = ModuleBay
         fields = [
-            'id', 'url', 'display', 'device', 'name', 'installed_module', 'label', 'position', 'description', 'tags', 'custom_fields',
-            'created', 'last_updated',
+            'id', 'url', 'display', 'device', 'name', 'installed_module', 'label', 'position', 'description', 'tags',
+            'custom_fields', 'created', 'last_updated',
         ]
 
 
@@ -1022,7 +1067,7 @@ class InventoryItemSerializer(NetBoxModelSerializer):
         required=False,
         allow_null=True
     )
-    component = serializers.SerializerMethodField(read_only=True)
+    component = serializers.SerializerMethodField(read_only=True, allow_null=True)
     _depth = serializers.IntegerField(source='level', read_only=True)
 
     class Meta:
@@ -1136,13 +1181,15 @@ class CablePathSerializer(serializers.ModelSerializer):
 class VirtualChassisSerializer(NetBoxModelSerializer):
     url = serializers.HyperlinkedIdentityField(view_name='dcim-api:virtualchassis-detail')
     master = NestedDeviceSerializer(required=False, allow_null=True, default=None)
+
+    # Counter fields
     member_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = VirtualChassis
         fields = [
             'id', 'url', 'display', 'name', 'domain', 'master', 'description', 'comments', 'tags', 'custom_fields',
-            'member_count', 'created', 'last_updated',
+            'created', 'last_updated', 'member_count',
         ]
 
 
@@ -1192,6 +1239,10 @@ class PowerFeedSerializer(NetBoxModelSerializer, CabledObjectSerializer, Connect
         choices=PowerFeedPhaseChoices,
         default=lambda: PowerFeedPhaseChoices.PHASE_SINGLE,
     )
+    tenant = NestedTenantSerializer(
+        required=False,
+        allow_null=True
+    )
 
     class Meta:
         model = PowerFeed
@@ -1199,5 +1250,5 @@ class PowerFeedSerializer(NetBoxModelSerializer, CabledObjectSerializer, Connect
             'id', 'url', 'display', 'power_panel', 'rack', 'name', 'status', 'type', 'supply', 'phase', 'voltage',
             'amperage', 'max_utilization', 'mark_connected', 'cable', 'cable_end', 'link_peers', 'link_peers_type',
             'connected_endpoints', 'connected_endpoints_type', 'connected_endpoints_reachable', 'description',
-            'comments', 'tags', 'custom_fields', 'created', 'last_updated', '_occupied',
+            'tenant', 'comments', 'tags', 'custom_fields', 'created', 'last_updated', '_occupied',
         ]

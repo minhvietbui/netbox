@@ -1,9 +1,12 @@
 from django.contrib.contenttypes.fields import GenericForeignKey
-from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.urls import reverse
+from django.utils.translation import gettext_lazy as _
 
+from core.models import ContentType
 from netbox.models import ChangeLoggedModel, NestedGroupModel, OrganizationalModel, PrimaryModel
+from netbox.models.features import CustomFieldsMixin, ExportTemplatesMixin, TagsMixin
 from tenancy.choices import *
 
 __all__ = (
@@ -26,6 +29,8 @@ class ContactGroup(NestedGroupModel):
                 name='%(app_label)s_%(class)s_unique_parent_name'
             ),
         )
+        verbose_name = _('contact group')
+        verbose_name_plural = _('contact groups')
 
     def get_absolute_url(self):
         return reverse('tenancy:contactgroup', args=[self.pk])
@@ -37,6 +42,11 @@ class ContactRole(OrganizationalModel):
     """
     def get_absolute_url(self):
         return reverse('tenancy:contactrole', args=[self.pk])
+
+    class Meta:
+        ordering = ('name',)
+        verbose_name = _('contact role')
+        verbose_name_plural = _('contact roles')
 
 
 class Contact(PrimaryModel):
@@ -51,24 +61,30 @@ class Contact(PrimaryModel):
         null=True
     )
     name = models.CharField(
+        verbose_name=_('name'),
         max_length=100
     )
     title = models.CharField(
+        verbose_name=_('title'),
         max_length=100,
         blank=True
     )
     phone = models.CharField(
+        verbose_name=_('phone'),
         max_length=50,
         blank=True
     )
     email = models.EmailField(
+        verbose_name=_('email'),
         blank=True
     )
     address = models.CharField(
+        verbose_name=_('address'),
         max_length=200,
         blank=True
     )
     link = models.URLField(
+        verbose_name=_('link'),
         blank=True
     )
 
@@ -84,6 +100,8 @@ class Contact(PrimaryModel):
                 name='%(app_label)s_%(class)s_unique_group_name'
             ),
         )
+        verbose_name = _('contact')
+        verbose_name_plural = _('contacts')
 
     def __str__(self):
         return self.name
@@ -92,9 +110,9 @@ class Contact(PrimaryModel):
         return reverse('tenancy:contact', args=[self.pk])
 
 
-class ContactAssignment(ChangeLoggedModel):
+class ContactAssignment(CustomFieldsMixin, ExportTemplatesMixin, TagsMixin, ChangeLoggedModel):
     content_type = models.ForeignKey(
-        to=ContentType,
+        to='contenttypes.ContentType',
         on_delete=models.CASCADE
     )
     object_id = models.PositiveBigIntegerField()
@@ -113,6 +131,7 @@ class ContactAssignment(ChangeLoggedModel):
         related_name='assignments'
     )
     priority = models.CharField(
+        verbose_name=_('priority'),
         max_length=50,
         choices=ContactPriorityChoices,
         blank=True
@@ -121,13 +140,18 @@ class ContactAssignment(ChangeLoggedModel):
     clone_fields = ('content_type', 'object_id', 'role', 'priority')
 
     class Meta:
-        ordering = ('priority', 'contact')
+        ordering = ('contact', 'priority', 'role', 'pk')
+        indexes = (
+            models.Index(fields=('content_type', 'object_id')),
+        )
         constraints = (
             models.UniqueConstraint(
                 fields=('content_type', 'object_id', 'contact', 'role'),
                 name='%(app_label)s_%(class)s_unique_object_contact_role'
             ),
         )
+        verbose_name = _('contact assignment')
+        verbose_name_plural = _('contact assignments')
 
     def __str__(self):
         if self.priority:
@@ -136,3 +160,17 @@ class ContactAssignment(ChangeLoggedModel):
 
     def get_absolute_url(self):
         return reverse('tenancy:contact', args=[self.contact.pk])
+
+    def clean(self):
+        super().clean()
+
+        # Validate the assigned object type
+        if self.content_type not in ContentType.objects.with_feature('contacts'):
+            raise ValidationError(
+                _("Contacts cannot be assigned to this object type ({type}).").format(type=self.content_type)
+            )
+
+    def to_objectchange(self, action):
+        objectchange = super().to_objectchange(action)
+        objectchange.related_object = self.object
+        return objectchange

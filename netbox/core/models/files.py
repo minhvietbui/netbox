@@ -2,6 +2,7 @@ import logging
 import os
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.urls import reverse
 from django.utils.translation import gettext as _
@@ -23,23 +24,28 @@ class ManagedFile(SyncedDataMixin, models.Model):
     to provide additional functionality.
     """
     created = models.DateTimeField(
+        verbose_name=_('created'),
         auto_now_add=True
     )
     last_updated = models.DateTimeField(
+        verbose_name=_('last updated'),
         editable=False,
         blank=True,
         null=True
     )
     file_root = models.CharField(
+        verbose_name=_('file root'),
         max_length=1000,
         choices=ManagedFileRootPathChoices
     )
     file_path = models.FilePathField(
+        verbose_name=_('file path'),
         editable=False,
-        help_text=_("File path relative to the designated root path")
+        help_text=_('File path relative to the designated root path')
     )
 
     objects = RestrictedQuerySet.as_manager()
+    _netbox_private = True
 
     class Meta:
         ordering = ('file_root', 'file_path')
@@ -52,6 +58,8 @@ class ManagedFile(SyncedDataMixin, models.Model):
         indexes = [
             models.Index(fields=('file_root', 'file_path'), name='core_managedfile_root_path'),
         ]
+        verbose_name = _('managed file')
+        verbose_name_plural = _('managed files')
 
     def __str__(self):
         return self.name
@@ -77,6 +85,14 @@ class ManagedFile(SyncedDataMixin, models.Model):
         if self.data_file:
             self.file_path = os.path.basename(self.data_path)
             self.data_file.write_to_disk(self.full_path, overwrite=True)
+
+    def clean(self):
+        super().clean()
+
+        # Ensure that the file root and path make a unique pair
+        if self._meta.model.objects.filter(file_root=self.file_root, file_path=self.file_path).exclude(pk=self.pk).exists():
+            raise ValidationError(
+                f"A {self._meta.verbose_name.lower()} with this file path already exists ({self.file_root}/{self.file_path}).")
 
     def delete(self, *args, **kwargs):
         # Delete file from disk

@@ -1,4 +1,4 @@
-from django.urls import include, path, re_path
+from django.urls import include, path
 
 from extras import views
 from utilities.urls import get_model_urls
@@ -14,6 +14,14 @@ urlpatterns = [
     path('custom-fields/edit/', views.CustomFieldBulkEditView.as_view(), name='customfield_bulk_edit'),
     path('custom-fields/delete/', views.CustomFieldBulkDeleteView.as_view(), name='customfield_bulk_delete'),
     path('custom-fields/<int:pk>/', include(get_model_urls('extras', 'customfield'))),
+
+    # Custom field choices
+    path('custom-field-choices/', views.CustomFieldChoiceSetListView.as_view(), name='customfieldchoiceset_list'),
+    path('custom-field-choices/add/', views.CustomFieldChoiceSetEditView.as_view(), name='customfieldchoiceset_add'),
+    path('custom-field-choices/import/', views.CustomFieldChoiceSetBulkImportView.as_view(), name='customfieldchoiceset_import'),
+    path('custom-field-choices/edit/', views.CustomFieldChoiceSetBulkEditView.as_view(), name='customfieldchoiceset_bulk_edit'),
+    path('custom-field-choices/delete/', views.CustomFieldChoiceSetBulkDeleteView.as_view(), name='customfieldchoiceset_bulk_delete'),
+    path('custom-field-choices/<int:pk>/', include(get_model_urls('extras', 'customfieldchoiceset'))),
 
     # Custom links
     path('custom-links/', views.CustomLinkListView.as_view(), name='customlink_list'),
@@ -40,6 +48,11 @@ urlpatterns = [
     path('saved-filters/delete/', views.SavedFilterBulkDeleteView.as_view(), name='savedfilter_bulk_delete'),
     path('saved-filters/<int:pk>/', include(get_model_urls('extras', 'savedfilter'))),
 
+    # Bookmarks
+    path('bookmarks/add/', views.BookmarkCreateView.as_view(), name='bookmark_add'),
+    path('bookmarks/delete/', views.BookmarkBulkDeleteView.as_view(), name='bookmark_bulk_delete'),
+    path('bookmarks/<int:pk>/', include(get_model_urls('extras', 'bookmark'))),
+
     # Webhooks
     path('webhooks/', views.WebhookListView.as_view(), name='webhook_list'),
     path('webhooks/add/', views.WebhookEditView.as_view(), name='webhook_add'),
@@ -47,6 +60,14 @@ urlpatterns = [
     path('webhooks/edit/', views.WebhookBulkEditView.as_view(), name='webhook_bulk_edit'),
     path('webhooks/delete/', views.WebhookBulkDeleteView.as_view(), name='webhook_bulk_delete'),
     path('webhooks/<int:pk>/', include(get_model_urls('extras', 'webhook'))),
+
+    # Event rules
+    path('event-rules/', views.EventRuleListView.as_view(), name='eventrule_list'),
+    path('event-rules/add/', views.EventRuleEditView.as_view(), name='eventrule_add'),
+    path('event-rules/import/', views.EventRuleBulkImportView.as_view(), name='eventrule_import'),
+    path('event-rules/edit/', views.EventRuleBulkEditView.as_view(), name='eventrule_bulk_edit'),
+    path('event-rules/delete/', views.EventRuleBulkDeleteView.as_view(), name='eventrule_bulk_delete'),
+    path('event-rules/<int:pk>/', include(get_model_urls('extras', 'eventrule'))),
 
     # Tags
     path('tags/', views.TagListView.as_view(), name='tag_list'),
@@ -114,5 +135,5 @@ urlpatterns = [
     path('scripts/<str:module>/<str:name>/jobs/', views.ScriptJobsView.as_view(), name='script_jobs'),
 
     # Markdown
-    path('render/markdown/', views.RenderMarkdownView.as_view(), name="render_markdown")
+    path('render/markdown/', views.RenderMarkdownView.as_view(), name="render_markdown"),
 ]

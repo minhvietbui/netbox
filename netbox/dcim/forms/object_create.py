@@ -1,5 +1,5 @@
 from django import forms
-from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy as _
 
 from dcim.models import *
 from netbox.forms import NetBoxModelForm
@@ -38,8 +38,11 @@ class ComponentCreateForm(forms.Form):
     Subclass this form when facilitating the creation of one or more component or component template objects based on
     a name pattern.
     """
-    name = ExpandableNameField()
+    name = ExpandableNameField(
+        label=_('Name'),
+    )
     label = ExpandableNameField(
+        label=_('Label'),
         required=False,
         help_text=_('Alphanumeric ranges are supported. (Must match the number of objects being created.)')
     )
@@ -52,13 +55,17 @@ class ComponentCreateForm(forms.Form):
         super().clean()
 
         # Validate that all replication fields generate an equal number of values
-        pattern_count = len(self.cleaned_data[self.replication_fields[0]])
+        if not (patterns := self.cleaned_data.get(self.replication_fields[0])):
+            return
+
+        pattern_count = len(patterns)
         for field_name in self.replication_fields:
             value_count = len(self.cleaned_data[field_name])
             if self.cleaned_data[field_name] and value_count != pattern_count:
                 raise forms.ValidationError({
-                    field_name: f'The provided pattern specifies {value_count} values, but {pattern_count} are '
-                                f'expected.'
+                    field_name: _(
+                        "The provided pattern specifies {value_count} values, but {pattern_count} are expected."
+                    ).format(value_count=value_count, pattern_count=pattern_count)
                 }, code='label_pattern_mismatch')
 
 
@@ -101,6 +108,7 @@ class FrontPortTemplateCreateForm(ComponentCreateForm, model_forms.FrontPortTemp
         choices=[],
         label=_('Rear ports'),
         help_text=_('Select one rear port assignment for each front port being created.'),
+        widget=forms.SelectMultiple(attrs={'size': 6})
     )
 
     # Override fieldsets from FrontPortTemplateForm to omit rear_port_position
@@ -142,6 +150,23 @@ class FrontPortTemplateCreateForm(ComponentCreateForm, model_forms.FrontPortTemp
                         ('{}:{}'.format(rear_port.pk, i), '{}:{}'.format(rear_port.name, i))
                     )
         self.fields['rear_port'].choices = choices
+
+    def clean(self):
+
+        # Check that the number of FrontPortTemplates to be created matches the selected number of RearPortTemplate
+        # positions
+        frontport_count = len(self.cleaned_data['name'])
+        rearport_count = len(self.cleaned_data['rear_port'])
+        if frontport_count != rearport_count:
+            raise forms.ValidationError({
+                'rear_port': _(
+                    "The number of front port templates to be created ({frontport_count}) must match the selected "
+                    "number of rear port positions ({rearport_count})."
+                ).format(
+                    frontport_count=frontport_count,
+                    rearport_count=rearport_count
+                )
+            })
 
     def get_iterative_data(self, iteration):
 
@@ -221,12 +246,14 @@ class InterfaceCreateForm(ComponentCreateForm, model_forms.InterfaceForm):
         super().__init__(*args, **kwargs)
 
         if 'module' in self.fields:
-            self.fields['name'].help_text += ' The string <code>{module}</code> will be replaced with the position ' \
-                                             'of the assigned module, if any'
+            self.fields['name'].help_text += _(
+                "The string <code>{module}</code> will be replaced with the position of the assigned module, if any."
+            )
 
 
 class FrontPortCreateForm(ComponentCreateForm, model_forms.FrontPortForm):
     device = DynamicModelChoiceField(
+        label=_('Device'),
         queryset=Device.objects.all(),
         selector=True,
         widget=APISelect(
@@ -242,6 +269,7 @@ class FrontPortCreateForm(ComponentCreateForm, model_forms.FrontPortForm):
         choices=[],
         label=_('Rear ports'),
         help_text=_('Select one rear port assignment for each front port being created.'),
+        widget=forms.SelectMultiple(attrs={'size': 6})
     )
 
     # Override fieldsets from FrontPortForm to omit rear_port_position
@@ -279,6 +307,22 @@ class FrontPortCreateForm(ComponentCreateForm, model_forms.FrontPortForm):
                         ('{}:{}'.format(rear_port.pk, i), '{}:{}'.format(rear_port.name, i))
                     )
         self.fields['rear_port'].choices = choices
+
+    def clean(self):
+
+        # Check that the number of FrontPorts to be created matches the selected number of RearPort positions
+        frontport_count = len(self.cleaned_data['name'])
+        rearport_count = len(self.cleaned_data['rear_port'])
+        if frontport_count != rearport_count:
+            raise forms.ValidationError({
+                'rear_port': _(
+                    "The number of front ports to be created ({frontport_count}) must match the selected number of "
+                    "rear port positions ({rearport_count})."
+                ).format(
+                    frontport_count=frontport_count,
+                    rearport_count=rearport_count
+                )
+            })
 
     def get_iterative_data(self, iteration):
 
@@ -327,6 +371,7 @@ class InventoryItemCreateForm(ComponentCreateForm, model_forms.InventoryItemForm
 
 class VirtualChassisCreateForm(NetBoxModelForm):
     region = DynamicModelChoiceField(
+        label=_('Region'),
         queryset=Region.objects.all(),
         required=False,
         initial_params={
@@ -334,6 +379,7 @@ class VirtualChassisCreateForm(NetBoxModelForm):
         }
     )
     site_group = DynamicModelChoiceField(
+        label=_('Site group'),
         queryset=SiteGroup.objects.all(),
         required=False,
         initial_params={
@@ -341,6 +387,7 @@ class VirtualChassisCreateForm(NetBoxModelForm):
         }
     )
     site = DynamicModelChoiceField(
+        label=_('Site'),
         queryset=Site.objects.all(),
         required=False,
         query_params={
@@ -349,6 +396,7 @@ class VirtualChassisCreateForm(NetBoxModelForm):
         }
     )
     rack = DynamicModelChoiceField(
+        label=_('Rack'),
         queryset=Rack.objects.all(),
         required=False,
         null_option='None',
@@ -357,6 +405,7 @@ class VirtualChassisCreateForm(NetBoxModelForm):
         }
     )
     members = DynamicModelMultipleChoiceField(
+        label=_('Members'),
         queryset=Device.objects.all(),
         required=False,
         query_params={
@@ -365,6 +414,7 @@ class VirtualChassisCreateForm(NetBoxModelForm):
         }
     )
     initial_position = forms.IntegerField(
+        label=_('Initial position'),
         initial=1,
         required=False,
         help_text=_('Position of the first member device. Increases by one for each additional member.')
@@ -381,7 +431,7 @@ class VirtualChassisCreateForm(NetBoxModelForm):
 
         if self.cleaned_data['members'] and self.cleaned_data['initial_position'] is None:
             raise forms.ValidationError({
-                'initial_position': "A position must be specified for the first VC member."
+                'initial_position': _("A position must be specified for the first VC member.")
             })
 
     def save(self, *args, **kwargs):

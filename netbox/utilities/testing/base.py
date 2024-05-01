@@ -1,6 +1,6 @@
 import json
 
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import FieldDoesNotExist
@@ -10,10 +10,11 @@ from django.test import Client, TestCase as _TestCase
 from netaddr import IPNetwork
 from taggit.managers import TaggableManager
 
+from netbox.models.features import CustomFieldsMixin
 from users.models import ObjectPermission
 from utilities.permissions import resolve_permission_ct
 from utilities.utils import content_type_identifier
-from .utils import extract_form_failures
+from .utils import DUMMY_CF_DATA, extract_form_failures
 
 __all__ = (
     'ModelTestCase',
@@ -27,7 +28,7 @@ class TestCase(_TestCase):
     def setUp(self):
 
         # Create the test user and assign permissions
-        self.user = User.objects.create_user(username='testuser')
+        self.user = get_user_model().objects.create_user(username='testuser')
         self.add_permissions(*self.user_permissions)
 
         # Initialize the test client
@@ -129,13 +130,18 @@ class ModelTestCase(TestCase):
                     model_dict[key] = str(value)
 
             else:
+                field = instance._meta.get_field(key)
 
                 # Convert ArrayFields to CSV strings
-                if type(instance._meta.get_field(key)) is ArrayField:
-                    model_dict[key] = ','.join([str(v) for v in value])
+                if type(field) is ArrayField:
+                    if type(field.base_field) is ArrayField:
+                        # Handle nested arrays (e.g. choice sets)
+                        model_dict[key] = '\n'.join([f'{k},{v}' for k, v in value])
+                    else:
+                        model_dict[key] = ','.join([str(v) for v in value])
 
                 # JSON
-                if type(instance._meta.get_field(key)) is JSONField and value is not None:
+                if type(field) is JSONField and value is not None:
                     model_dict[key] = json.dumps(value)
 
         return model_dict
@@ -161,8 +167,12 @@ class ModelTestCase(TestCase):
         model_dict = self.model_to_dict(instance, fields=fields, api=api)
 
         # Omit any dictionary keys which are not instance attributes or have been excluded
-        relevant_data = {
+        model_data = {
             k: v for k, v in data.items() if hasattr(instance, k) and k not in exclude
         }
 
-        self.assertDictEqual(model_dict, relevant_data)
+        self.assertDictEqual(model_dict, model_data)
+
+        # Validate any custom field data, if present
+        if getattr(instance, 'custom_field_data', None):
+            self.assertDictEqual(instance.custom_field_data, DUMMY_CF_DATA)

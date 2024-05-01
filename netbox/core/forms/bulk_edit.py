@@ -1,10 +1,9 @@
 from django import forms
-from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy as _
 
-from core.choices import DataSourceTypeChoices
 from core.models import *
 from netbox.forms import NetBoxModelBulkEditForm
-from utilities.forms import add_blank_choice
+from netbox.utils import get_data_backend_choices
 from utilities.forms.fields import CommentField
 from utilities.forms.widgets import BulkEditNullBooleanSelect
 
@@ -15,26 +14,27 @@ __all__ = (
 
 class DataSourceBulkEditForm(NetBoxModelBulkEditForm):
     type = forms.ChoiceField(
-        choices=add_blank_choice(DataSourceTypeChoices),
-        required=False,
-        initial=''
+        label=_('Type'),
+        choices=get_data_backend_choices,
+        required=False
     )
     enabled = forms.NullBooleanField(
         required=False,
         widget=BulkEditNullBooleanSelect(),
-        label=_('Enforce unique space')
+        label=_('Enabled')
     )
     description = forms.CharField(
+        label=_('Description'),
         max_length=200,
         required=False
     )
-    comments = CommentField(
-        label=_('Comments')
-    )
+    comments = CommentField()
     parameters = forms.JSONField(
+        label=_('Parameters'),
         required=False
     )
     ignore_rules = forms.CharField(
+        label=_('Ignore rules'),
         required=False,
         widget=forms.Textarea()
     )

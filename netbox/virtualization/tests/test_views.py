@@ -5,9 +5,9 @@ from netaddr import EUI
 from dcim.choices import InterfaceModeChoices
 from dcim.models import DeviceRole, Platform, Site
 from ipam.models import VLAN, VRF
-from utilities.testing import ViewTestCases, create_tags, create_test_device
+from utilities.testing import ViewTestCases, create_tags, create_test_device, create_test_virtualmachine
 from virtualization.choices import *
-from virtualization.models import Cluster, ClusterGroup, ClusterType, VirtualMachine, VMInterface
+from virtualization.models import *
 
 
 class ClusterGroupTestCase(ViewTestCases.OrganizationalObjectViewTestCase):
@@ -180,11 +180,11 @@ class VirtualMachineTestCase(ViewTestCases.PrimaryObjectViewTestCase):
     @classmethod
     def setUpTestData(cls):
 
-        deviceroles = (
+        roles = (
             DeviceRole(name='Device Role 1', slug='device-role-1'),
             DeviceRole(name='Device Role 2', slug='device-role-2'),
         )
-        DeviceRole.objects.bulk_create(deviceroles)
+        DeviceRole.objects.bulk_create(roles)
 
         platforms = (
             Platform(name='Platform 1', slug='platform-1'),
@@ -212,9 +212,9 @@ class VirtualMachineTestCase(ViewTestCases.PrimaryObjectViewTestCase):
         )
 
         virtual_machines = (
-            VirtualMachine(name='Virtual Machine 1', site=sites[0], cluster=clusters[0], device=devices[0], role=deviceroles[0], platform=platforms[0]),
-            VirtualMachine(name='Virtual Machine 2', site=sites[0], cluster=clusters[0], device=devices[0], role=deviceroles[0], platform=platforms[0]),
-            VirtualMachine(name='Virtual Machine 3', site=sites[0], cluster=clusters[0], device=devices[0], role=deviceroles[0], platform=platforms[0]),
+            VirtualMachine(name='Virtual Machine 1', site=sites[0], cluster=clusters[0], device=devices[0], role=roles[0], platform=platforms[0]),
+            VirtualMachine(name='Virtual Machine 2', site=sites[0], cluster=clusters[0], device=devices[0], role=roles[0], platform=platforms[0]),
+            VirtualMachine(name='Virtual Machine 3', site=sites[0], cluster=clusters[0], device=devices[0], role=roles[0], platform=platforms[0]),
         )
         VirtualMachine.objects.bulk_create(virtual_machines)
 
@@ -228,7 +228,7 @@ class VirtualMachineTestCase(ViewTestCases.PrimaryObjectViewTestCase):
             'platform': platforms[1].pk,
             'name': 'Virtual Machine X',
             'status': VirtualMachineStatusChoices.STATUS_STAGED,
-            'role': deviceroles[1].pk,
+            'role': roles[1].pk,
             'primary_ip4': None,
             'primary_ip6': None,
             'vcpus': 4,
@@ -260,7 +260,7 @@ class VirtualMachineTestCase(ViewTestCases.PrimaryObjectViewTestCase):
             'tenant': None,
             'platform': platforms[1].pk,
             'status': VirtualMachineStatusChoices.STATUS_STAGED,
-            'role': deviceroles[1].pk,
+            'role': roles[1].pk,
             'vcpus': 8,
             'memory': 65535,
             'disk': 8000,
@@ -289,12 +289,12 @@ class VMInterfaceTestCase(ViewTestCases.DeviceComponentViewTestCase):
     def setUpTestData(cls):
 
         site = Site.objects.create(name='Site 1', slug='site-1')
-        devicerole = DeviceRole.objects.create(name='Device Role 1', slug='device-role-1')
+        role = DeviceRole.objects.create(name='Device Role 1', slug='device-role-1')
         clustertype = ClusterType.objects.create(name='Cluster Type 1', slug='cluster-type-1')
         cluster = Cluster.objects.create(name='Cluster 1', type=clustertype, site=site)
         virtualmachines = (
-            VirtualMachine(name='Virtual Machine 1', site=site, cluster=cluster, role=devicerole),
-            VirtualMachine(name='Virtual Machine 2', site=site, cluster=cluster, role=devicerole),
+            VirtualMachine(name='Virtual Machine 1', site=site, cluster=cluster, role=role),
+            VirtualMachine(name='Virtual Machine 2', site=site, cluster=cluster, role=role),
         )
         VirtualMachine.objects.bulk_create(virtualmachines)
 
@@ -373,4 +373,84 @@ class VMInterfaceTestCase(ViewTestCases.DeviceComponentViewTestCase):
             'mode': InterfaceModeChoices.MODE_TAGGED,
             'untagged_vlan': vlans[0].pk,
             'tagged_vlans': [v.pk for v in vlans[1:4]],
+        }
+
+    def test_bulk_delete_child_interfaces(self):
+        interface1 = VMInterface.objects.get(name='Interface 1')
+        virtual_machine = interface1.virtual_machine
+        self.add_permissions('virtualization.delete_vminterface')
+
+        # Create a child interface
+        child = VMInterface.objects.create(
+            virtual_machine=virtual_machine,
+            name='Interface 1A',
+            parent=interface1
+        )
+        self.assertEqual(virtual_machine.interfaces.count(), 4)
+
+        # Attempt to delete only the parent interface
+        data = {
+            'confirm': True,
+        }
+        self.client.post(self._get_url('delete', interface1), data)
+        self.assertEqual(virtual_machine.interfaces.count(), 4)  # Parent was not deleted
+
+        # Attempt to bulk delete parent & child together
+        data = {
+            'pk': [interface1.pk, child.pk],
+            'confirm': True,
+            '_confirm': True,  # Form button
+        }
+        self.client.post(self._get_url('bulk_delete'), data)
+        self.assertEqual(virtual_machine.interfaces.count(), 2)  # Child & parent were both deleted
+
+
+class VirtualDiskTestCase(ViewTestCases.DeviceComponentViewTestCase):
+    model = VirtualDisk
+    validation_excluded_fields = ('name',)
+
+    @classmethod
+    def setUpTestData(cls):
+        virtualmachine = create_test_virtualmachine('Virtual Machine 1')
+
+        disks = VirtualDisk.objects.bulk_create([
+            VirtualDisk(virtual_machine=virtualmachine, name='Virtual Disk 1', size=10),
+            VirtualDisk(virtual_machine=virtualmachine, name='Virtual Disk 2', size=10),
+            VirtualDisk(virtual_machine=virtualmachine, name='Virtual Disk 3', size=10),
+        ])
+
+        tags = create_tags('Alpha', 'Bravo', 'Charlie')
+
+        cls.form_data = {
+            'virtual_machine': virtualmachine.pk,
+            'name': 'Virtual Disk X',
+            'size': 20,
+            'description': 'New description',
+            'tags': [t.pk for t in tags],
+        }
+
+        cls.bulk_create_data = {
+            'virtual_machine': virtualmachine.pk,
+            'name': 'Virtual Disk [4-6]',
+            'size': 10,
+            'tags': [t.pk for t in tags],
+        }
+
+        cls.csv_data = (
+            f"virtual_machine,name,size,description",
+            f"Virtual Machine 1,Disk 4,20,Fourth",
+            f"Virtual Machine 1,Disk 5,20,Fifth",
+            f"Virtual Machine 1,Disk 6,20,Sixth",
+        )
+
+        cls.csv_update_data = (
+            f"id,name,size",
+            f"{disks[0].pk},disk1,20",
+            f"{disks[1].pk},disk2,20",
+            f"{disks[2].pk},disk3,20",
+        )
+
+        cls.bulk_edit_data = {
+            'size': 30,
+            'description': 'New description',
         }

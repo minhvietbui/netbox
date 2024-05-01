@@ -1,4 +1,4 @@
-from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy as _
 
 from utilities.choices import ChoiceSet
 
@@ -6,18 +6,6 @@ from utilities.choices import ChoiceSet
 #
 # Data sources
 #
-
-class DataSourceTypeChoices(ChoiceSet):
-    LOCAL = 'local'
-    GIT = 'git'
-    AMAZON_S3 = 'amazon-s3'
-
-    CHOICES = (
-        (LOCAL, _('Local'), 'gray'),
-        (GIT, _('Git'), 'blue'),
-        (AMAZON_S3, _('Amazon S3'), 'blue'),
-    )
-
 
 class DataSourceStatusChoices(ChoiceSet):
     NEW = 'new'
@@ -63,12 +51,12 @@ class JobStatusChoices(ChoiceSet):
     STATUS_FAILED = 'failed'
 
     CHOICES = (
-        (STATUS_PENDING, 'Pending', 'cyan'),
-        (STATUS_SCHEDULED, 'Scheduled', 'gray'),
-        (STATUS_RUNNING, 'Running', 'blue'),
-        (STATUS_COMPLETED, 'Completed', 'green'),
-        (STATUS_ERRORED, 'Errored', 'red'),
-        (STATUS_FAILED, 'Failed', 'red'),
+        (STATUS_PENDING, _('Pending'), 'cyan'),
+        (STATUS_SCHEDULED, _('Scheduled'), 'gray'),
+        (STATUS_RUNNING, _('Running'), 'blue'),
+        (STATUS_COMPLETED, _('Completed'), 'green'),
+        (STATUS_ERRORED, _('Errored'), 'red'),
+        (STATUS_FAILED, _('Failed'), 'red'),
     )
 
     TERMINAL_STATE_CHOICES = (

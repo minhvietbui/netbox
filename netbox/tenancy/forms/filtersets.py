@@ -1,8 +1,7 @@
 from django import forms
-from django.contrib.contenttypes.models import ContentType
-from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy as _
 
-from extras.utils import FeatureQuery
+from core.models import ContentType
 from netbox.forms import NetBoxModelFilterSetForm
 from tenancy.choices import *
 from tenancy.models import *
@@ -83,12 +82,11 @@ class ContactFilterForm(NetBoxModelFilterSetForm):
 class ContactAssignmentFilterForm(NetBoxModelFilterSetForm):
     model = ContactAssignment
     fieldsets = (
-        (None, ('q', 'filter_id')),
-        ('Assignment', ('content_type_id', 'group_id', 'contact_id', 'role_id', 'priority')),
+        (None, ('q', 'filter_id', 'tag')),
+        (_('Assignment'), ('content_type_id', 'group_id', 'contact_id', 'role_id', 'priority')),
     )
     content_type_id = ContentTypeMultipleChoiceField(
-        queryset=ContentType.objects.all(),
-        limit_choices_to=FeatureQuery('custom_fields'),
+        queryset=ContentType.objects.with_feature('contacts'),
         required=False,
         label=_('Object type')
     )
@@ -108,6 +106,8 @@ class ContactAssignmentFilterForm(NetBoxModelFilterSetForm):
         label=_('Role')
     )
     priority = forms.MultipleChoiceField(
+        label=_('Priority'),
         choices=ContactPriorityChoices,
         required=False
     )
+    tag = TagFilterField(model)

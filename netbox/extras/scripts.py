@@ -11,25 +11,29 @@ from django.conf import settings
 from django.core.validators import RegexValidator
 from django.db import transaction
 from django.utils.functional import classproperty
+from django.utils.translation import gettext as _
 
 from core.choices import JobStatusChoices
 from core.models import Job
 from extras.api.serializers import ScriptOutputSerializer
 from extras.choices import LogLevelChoices
 from extras.models import ScriptModule
-from extras.signals import clear_webhooks
+from extras.signals import clear_events
 from ipam.formfields import IPAddressFormField, IPNetworkFormField
 from ipam.validators import MaxPrefixLengthValidator, MinPrefixLengthValidator, prefix_validator
 from utilities.exceptions import AbortScript, AbortTransaction
 from utilities.forms import add_blank_choice
 from utilities.forms.fields import DynamicModelChoiceField, DynamicModelMultipleChoiceField
-from .context_managers import change_logging
+from utilities.forms.widgets import DatePicker, DateTimePicker
+from .context_managers import event_tracking
 from .forms import ScriptForm
 
 __all__ = (
     'BaseScript',
     'BooleanVar',
     'ChoiceVar',
+    'DateVar',
+    'DateTimeVar',
     'FileVar',
     'IntegerVar',
     'IPAddressVar',
@@ -169,6 +173,28 @@ class ChoiceVar(ScriptVariable):
 
         # Set field choices, adding a blank choice to avoid forced selections
         self.field_attrs['choices'] = add_blank_choice(choices)
+
+
+class DateVar(ScriptVariable):
+    """
+    A date.
+    """
+    form_field = forms.DateField
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.form_field.widget = DatePicker()
+
+
+class DateTimeVar(ScriptVariable):
+    """
+    A date and a time.
+    """
+    form_field = forms.DateTimeField
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.form_field.widget = DateTimePicker()
 
 
 class MultiChoiceVar(ScriptVariable):
@@ -356,7 +382,7 @@ class BaseScript:
         return ordered_vars
 
     def run(self, data, commit):
-        raise NotImplementedError("The script must define a run() method.")
+        raise NotImplementedError(_("The script must define a run() method."))
 
     # Form rendering
 
@@ -366,12 +392,12 @@ class BaseScript:
         if self.fieldsets:
             fieldsets.extend(self.fieldsets)
         else:
-            fields = (name for name, _ in self._get_vars().items())
-            fieldsets.append(('Script Data', fields))
+            fields = list(name for name, _ in self._get_vars().items())
+            fieldsets.append((_('Script Data'), fields))
 
         # Append the default fieldset if defined in the Meta class
         exec_parameters = ('_schedule_at', '_interval', '_commit') if self.scheduling_enabled else ('_commit',)
-        fieldsets.append(('Script Execution Parameters', exec_parameters))
+        fieldsets.append((_('Script Execution Parameters'), exec_parameters))
 
         return fieldsets
 
@@ -390,29 +416,34 @@ class BaseScript:
         # Set initial "commit" checkbox state based on the script's Meta parameter
         form.fields['_commit'].initial = self.commit_default
 
+        # Hide fields if scheduling has been disabled
+        if not self.scheduling_enabled:
+            form.fields['_schedule_at'].widget = forms.HiddenInput()
+            form.fields['_interval'].widget = forms.HiddenInput()
+
         return form
 
     # Logging
 
     def log_debug(self, message):
         self.logger.log(logging.DEBUG, message)
-        self.log.append((LogLevelChoices.LOG_DEFAULT, message))
+        self.log.append((LogLevelChoices.LOG_DEFAULT, str(message)))
 
     def log_success(self, message):
         self.logger.log(logging.INFO, message)  # No syslog equivalent for SUCCESS
-        self.log.append((LogLevelChoices.LOG_SUCCESS, message))
+        self.log.append((LogLevelChoices.LOG_SUCCESS, str(message)))
 
     def log_info(self, message):
         self.logger.log(logging.INFO, message)
-        self.log.append((LogLevelChoices.LOG_INFO, message))
+        self.log.append((LogLevelChoices.LOG_INFO, str(message)))
 
     def log_warning(self, message):
         self.logger.log(logging.WARNING, message)
-        self.log.append((LogLevelChoices.LOG_WARNING, message))
+        self.log.append((LogLevelChoices.LOG_WARNING, str(message)))
 
     def log_failure(self, message):
         self.logger.log(logging.ERROR, message)
-        self.log.append((LogLevelChoices.LOG_FAILURE, message))
+        self.log.append((LogLevelChoices.LOG_FAILURE, str(message)))
 
     # Convenience functions
 
@@ -467,10 +498,16 @@ def get_module_and_script(module_name, script_name):
     return module, script
 
 
-def run_script(data, request, job, commit=True, **kwargs):
+def run_script(data, job, request=None, commit=True, **kwargs):
     """
     A wrapper for calling Script.run(). This performs error handling and provides a hook for committing changes. It
     exists outside the Script class to ensure it cannot be overridden by a script author.
+
+    Args:
+        data: A dictionary of data to be passed to the script upon execution
+        job: The Job associated with this execution
+        request: The WSGI request associated with this execution (if any)
+        commit: Passed through to Script.run()
     """
     job.start()
 
@@ -481,9 +518,10 @@ def run_script(data, request, job, commit=True, **kwargs):
     logger.info(f"Running script (commit={commit})")
 
     # Add files to form data
-    files = request.FILES
-    for field_name, fileobj in files.items():
-        data[field_name] = fileobj
+    if request:
+        files = request.FILES
+        for field_name, fileobj in files.items():
+            data[field_name] = fileobj
 
     # Add the current request as a property of the script
     script.request = request
@@ -491,7 +529,7 @@ def run_script(data, request, job, commit=True, **kwargs):
     def _run_script():
         """
         Core script execution task. We capture this within a subfunction to allow for conditionally wrapping it with
-        the change_logging context manager (which is bypassed if commit == False).
+        the event_tracking context manager (which is bypassed if commit == False).
         """
         try:
             try:
@@ -501,7 +539,8 @@ def run_script(data, request, job, commit=True, **kwargs):
                         raise AbortTransaction()
             except AbortTransaction:
                 script.log_info("Database changes have been reverted automatically.")
-                clear_webhooks.send(request)
+                if request:
+                    clear_events.send(request)
             job.data = ScriptOutputSerializer(script).data
             job.terminate()
         except Exception as e:
@@ -514,15 +553,16 @@ def run_script(data, request, job, commit=True, **kwargs):
                 logger.error(f"Exception raised during script execution: {e}")
             script.log_info("Database changes have been reverted due to error.")
             job.data = ScriptOutputSerializer(script).data
-            job.terminate(status=JobStatusChoices.STATUS_ERRORED)
-            clear_webhooks.send(request)
+            job.terminate(status=JobStatusChoices.STATUS_ERRORED, error=repr(e))
+            if request:
+                clear_events.send(request)
 
         logger.info(f"Script completed in {job.duration}")
 
-    # Execute the script. If commit is True, wrap it with the change_logging context manager to ensure we process
-    # change logging, webhooks, etc.
+    # Execute the script. If commit is True, wrap it with the event_tracking context manager to ensure we process
+    # change logging, event rules, etc.
     if commit:
-        with change_logging(request):
+        with event_tracking(request):
             _run_script()
     else:
         _run_script()

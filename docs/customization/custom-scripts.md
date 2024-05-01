@@ -285,12 +285,20 @@ An IPv4 or IPv6 network with a mask. Returns a `netaddr.IPNetwork` object. Two a
 * `min_prefix_length` - Minimum length of the mask
 * `max_prefix_length` - Maximum length of the mask
 
+### DateVar
+
+A calendar date. Returns a `datetime.date` object.
+
+### DateTimeVar
+
+A complete date & time. Returns a `datetime.datetime` object.
+
 ## Running Custom Scripts
 
 !!! note
-    To run a custom script, a user must be assigned the `extras.run_script` permission. This is achieved by assigning the user (or group) a permission on the Script object and specifying the `run` action in the admin UI as shown below.
+    To run a custom script, a user must be assigned permissions for `Extras > Script`, `Extras > Script Module`, and `Core > Managed File` objects. They must also be assigned the `extras.run_script` permission. This is achieved by assigning the user (or group) a permission on the Script object and specifying the `run` action in "Permissions" as shown below.
 
-    ![Adding the run action to a permission](../media/admin_ui_run_permission.png)
+    ![Adding the run action to a permission](../media/run_permission.png)
 
 ### Via the Web UI
 
@@ -378,6 +386,7 @@ class NewBranchScript(Script):
             slug=slugify(data['site_name']),
             status=SiteStatusChoices.STATUS_PLANNED
         )
+        site.full_clean()
         site.save()
         self.log_success(f"Created new site: {site}")
 
@@ -391,6 +400,7 @@ class NewBranchScript(Script):
                 status=DeviceStatusChoices.STATUS_PLANNED,
                 device_role=switch_role
             )
+            switch.full_clean()
             switch.save()
             self.log_success(f"Created new switch: {switch}")
 

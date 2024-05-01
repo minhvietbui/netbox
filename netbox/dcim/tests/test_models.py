@@ -1,9 +1,11 @@
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from circuits.models import *
 from dcim.choices import *
 from dcim.models import *
+from extras.models import CustomField
 from tenancy.models import Tenant
 from utilities.utils import drange
 
@@ -25,7 +27,7 @@ class LocationTestCase(TestCase):
         device_type = DeviceType.objects.create(
             manufacturer=manufacturer, model='Device Type 1', slug='device-type-1'
         )
-        device_role = DeviceRole.objects.create(
+        role = DeviceRole.objects.create(
             name='Device Role 1', slug='device-role-1', color='ff0000'
         )
 
@@ -45,14 +47,14 @@ class LocationTestCase(TestCase):
             location=location_a1,
             name='Device 1',
             device_type=device_type,
-            device_role=device_role
+            role=role
         )
         device2 = Device.objects.create(
             site=site_a,
             location=location_a2,
             name='Device 2',
             device_type=device_type,
-            device_role=device_role
+            role=role
         )
 
         powerpanel1 = PowerPanel.objects.create(site=site_a, location=location_a1, name='Power Panel 1')
@@ -114,7 +116,7 @@ class RackTestCase(TestCase):
         device1 = Device(
             name='Device 1',
             device_type=DeviceType.objects.first(),
-            device_role=DeviceRole.objects.first(),
+            role=DeviceRole.objects.first(),
             site=site,
             rack=rack,
             position=43,
@@ -147,7 +149,7 @@ class RackTestCase(TestCase):
         device1 = Device(
             name='TestSwitch1',
             device_type=DeviceType.objects.first(),
-            device_role=DeviceRole.objects.first(),
+            role=DeviceRole.objects.first(),
             site=site,
             rack=rack,
             position=10.0,
@@ -189,7 +191,7 @@ class RackTestCase(TestCase):
 
         Device(
             name='Device 1',
-            device_role=DeviceRole.objects.first(),
+            role=DeviceRole.objects.first(),
             device_type=DeviceType.objects.first(),
             site=site,
             rack=rack
@@ -202,7 +204,7 @@ class RackTestCase(TestCase):
         rack = Rack.objects.first()
         attrs = {
             'device_type': DeviceType.objects.get(u_height=0.5),
-            'device_role': DeviceRole.objects.first(),
+            'role': DeviceRole.objects.first(),
             'site': Site.objects.first(),
             'rack': rack,
             'face': DeviceFaceChoices.FACE_FRONT,
@@ -228,7 +230,7 @@ class RackTestCase(TestCase):
             site=site_a,
             rack=rack1,
             device_type=DeviceType.objects.first(),
-            device_role=DeviceRole.objects.first()
+            role=DeviceRole.objects.first()
         )
 
         # Move Rack1 to Site B
@@ -238,19 +240,72 @@ class RackTestCase(TestCase):
         # Check that Device1 is now assigned to Site B
         self.assertEqual(Device.objects.get(pk=device1.pk).site, site_b)
 
+    def test_utilization(self):
+        site = Site.objects.first()
+        rack = Rack.objects.first()
+
+        Device(
+            name='Device 1',
+            role=DeviceRole.objects.first(),
+            device_type=DeviceType.objects.first(),
+            site=site,
+            rack=rack,
+            position=1
+        ).save()
+        rack.refresh_from_db()
+        self.assertEqual(rack.get_utilization(), 1 / 42 * 100)
+
+        # create device excluded from utilization calculations
+        dt = DeviceType.objects.create(
+            manufacturer=Manufacturer.objects.first(),
+            model='Device Type 4',
+            slug='device-type-4',
+            u_height=1,
+            exclude_from_utilization=True
+        )
+        Device(
+            name='Device 2',
+            role=DeviceRole.objects.first(),
+            device_type=dt,
+            site=site,
+            rack=rack,
+            position=5
+        ).save()
+        rack.refresh_from_db()
+        self.assertEqual(rack.get_utilization(), 1 / 42 * 100)
+
 
 class DeviceTestCase(TestCase):
 
     @classmethod
     def setUpTestData(cls):
 
-        site = Site.objects.create(name='Test Site 1', slug='test-site-1')
+        Site.objects.create(name='Test Site 1', slug='test-site-1')
         manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
         device_type = DeviceType.objects.create(
             manufacturer=manufacturer, model='Test Device Type 1', slug='test-device-type-1'
         )
-        device_role = DeviceRole.objects.create(
-            name='Test Device Role 1', slug='test-device-role-1', color='ff0000'
+        roles = (
+            DeviceRole(name='Test Role 1', slug='test-role-1'),
+            DeviceRole(name='Test Role 2', slug='test-role-2'),
+        )
+        DeviceRole.objects.bulk_create(roles)
+
+        # Create a CustomField with a default value & assign it to all component models
+        cf1 = CustomField.objects.create(name='cf1', default='foo')
+        cf1.content_types.set(
+            ContentType.objects.filter(app_label='dcim', model__in=[
+                'consoleport',
+                'consoleserverport',
+                'powerport',
+                'poweroutlet',
+                'interface',
+                'rearport',
+                'frontport',
+                'modulebay',
+                'devicebay',
+                'inventoryitem',
+            ])
         )
 
         # Create DeviceType components
@@ -264,18 +319,18 @@ class DeviceTestCase(TestCase):
             name='Console Server Port 1'
         ).save()
 
-        ppt = PowerPortTemplate(
+        powerport = PowerPortTemplate(
             device_type=device_type,
             name='Power Port 1',
             maximum_draw=1000,
             allocated_draw=500
         )
-        ppt.save()
+        powerport.save()
 
         PowerOutletTemplate(
             device_type=device_type,
             name='Power Outlet 1',
-            power_port=ppt,
+            power_port=powerport,
             feed_leg=PowerOutletFeedLegChoices.FEED_LEG_A
         ).save()
 
@@ -286,19 +341,19 @@ class DeviceTestCase(TestCase):
             mgmt_only=True
         ).save()
 
-        rpt = RearPortTemplate(
+        rearport = RearPortTemplate(
             device_type=device_type,
             name='Rear Port 1',
             type=PortTypeChoices.TYPE_8P8C,
             positions=8
         )
-        rpt.save()
+        rearport.save()
 
         FrontPortTemplate(
             device_type=device_type,
             name='Front Port 1',
             type=PortTypeChoices.TYPE_8P8C,
-            rear_port=rpt,
+            rear_port=rearport,
             rear_port_position=2
         ).save()
 
@@ -312,80 +367,100 @@ class DeviceTestCase(TestCase):
             name='Device Bay 1'
         ).save()
 
+        InventoryItemTemplate(
+            device_type=device_type,
+            name='Inventory Item 1'
+        ).save()
+
     def test_device_creation(self):
         """
         Ensure that all Device components are copied automatically from the DeviceType.
         """
-        d = Device(
+        device = Device(
             site=Site.objects.first(),
             device_type=DeviceType.objects.first(),
-            device_role=DeviceRole.objects.first(),
+            role=DeviceRole.objects.first(),
             name='Test Device 1'
         )
-        d.save()
+        device.save()
 
-        ConsolePort.objects.get(
-            device=d,
+        consoleport = ConsolePort.objects.get(
+            device=device,
             name='Console Port 1'
         )
+        self.assertEqual(consoleport.cf['cf1'], 'foo')
 
-        ConsoleServerPort.objects.get(
-            device=d,
+        consoleserverport = ConsoleServerPort.objects.get(
+            device=device,
             name='Console Server Port 1'
         )
+        self.assertEqual(consoleserverport.cf['cf1'], 'foo')
 
-        pp = PowerPort.objects.get(
-            device=d,
+        powerport = PowerPort.objects.get(
+            device=device,
             name='Power Port 1',
             maximum_draw=1000,
             allocated_draw=500
         )
+        self.assertEqual(powerport.cf['cf1'], 'foo')
 
-        PowerOutlet.objects.get(
-            device=d,
+        poweroutlet = PowerOutlet.objects.get(
+            device=device,
             name='Power Outlet 1',
-            power_port=pp,
+            power_port=powerport,
             feed_leg=PowerOutletFeedLegChoices.FEED_LEG_A
         )
+        self.assertEqual(poweroutlet.cf['cf1'], 'foo')
 
-        Interface.objects.get(
-            device=d,
+        interface = Interface.objects.get(
+            device=device,
             name='Interface 1',
             type=InterfaceTypeChoices.TYPE_1GE_FIXED,
             mgmt_only=True
         )
+        self.assertEqual(interface.cf['cf1'], 'foo')
 
-        rp = RearPort.objects.get(
-            device=d,
+        rearport = RearPort.objects.get(
+            device=device,
             name='Rear Port 1',
             type=PortTypeChoices.TYPE_8P8C,
             positions=8
         )
+        self.assertEqual(rearport.cf['cf1'], 'foo')
 
-        FrontPort.objects.get(
-            device=d,
+        frontport = FrontPort.objects.get(
+            device=device,
             name='Front Port 1',
             type=PortTypeChoices.TYPE_8P8C,
-            rear_port=rp,
+            rear_port=rearport,
             rear_port_position=2
         )
+        self.assertEqual(frontport.cf['cf1'], 'foo')
 
-        ModuleBay.objects.get(
-            device=d,
+        modulebay = ModuleBay.objects.get(
+            device=device,
             name='Module Bay 1'
         )
+        self.assertEqual(modulebay.cf['cf1'], 'foo')
 
-        DeviceBay.objects.get(
-            device=d,
+        devicebay = DeviceBay.objects.get(
+            device=device,
             name='Device Bay 1'
         )
+        self.assertEqual(devicebay.cf['cf1'], 'foo')
+
+        inventoryitem = InventoryItem.objects.get(
+            device=device,
+            name='Inventory Item 1'
+        )
+        self.assertEqual(inventoryitem.cf['cf1'], 'foo')
 
     def test_multiple_unnamed_devices(self):
 
         device1 = Device(
             site=Site.objects.first(),
             device_type=DeviceType.objects.first(),
-            device_role=DeviceRole.objects.first(),
+            role=DeviceRole.objects.first(),
             name=None
         )
         device1.save()
@@ -393,7 +468,7 @@ class DeviceTestCase(TestCase):
         device2 = Device(
             site=device1.site,
             device_type=device1.device_type,
-            device_role=device1.device_role,
+            role=device1.role,
             name=None
         )
         device2.full_clean()
@@ -406,7 +481,7 @@ class DeviceTestCase(TestCase):
         device1 = Device(
             site=Site.objects.first(),
             device_type=DeviceType.objects.first(),
-            device_role=DeviceRole.objects.first(),
+            role=DeviceRole.objects.first(),
             name='device 1'
         )
         device1.save()
@@ -414,7 +489,7 @@ class DeviceTestCase(TestCase):
         device2 = Device(
             site=device1.site,
             device_type=device1.device_type,
-            device_role=device1.device_role,
+            role=device1.role,
             name='DEVICE 1'
         )
 
@@ -427,7 +502,7 @@ class DeviceTestCase(TestCase):
         device1 = Device(
             site=Site.objects.first(),
             device_type=DeviceType.objects.first(),
-            device_role=DeviceRole.objects.first(),
+            role=DeviceRole.objects.first(),
             name='Test Device 1'
         )
         device1.save()
@@ -435,7 +510,7 @@ class DeviceTestCase(TestCase):
         device2 = Device(
             site=device1.site,
             device_type=device1.device_type,
-            device_role=device1.device_role,
+            role=device1.role,
             name=device1.name
         )
 
@@ -458,6 +533,30 @@ class DeviceTestCase(TestCase):
         device2.full_clean()
         device2.save()
 
+    def test_old_device_role_field(self):
+        """
+        Ensure that the old device role field sets the value in the new role field.
+        """
+
+        # Test getter method
+        device = Device(
+            site=Site.objects.first(),
+            device_type=DeviceType.objects.first(),
+            role=DeviceRole.objects.first(),
+            name='Test Device 1',
+            device_role=DeviceRole.objects.first()
+        )
+        device.full_clean()
+        device.save()
+
+        self.assertEqual(device.role, device.device_role)
+
+        # Test setter method
+        device.device_role = DeviceRole.objects.last()
+        device.full_clean()
+        device.save()
+        self.assertEqual(device.role, device.device_role)
+
 
 class CableTestCase(TestCase):
 
@@ -469,14 +568,14 @@ class CableTestCase(TestCase):
         devicetype = DeviceType.objects.create(
             manufacturer=manufacturer, model='Test Device Type 1', slug='test-device-type-1'
         )
-        devicerole = DeviceRole.objects.create(
+        role = DeviceRole.objects.create(
             name='Test Device Role 1', slug='test-device-role-1', color='ff0000'
         )
         device1 = Device.objects.create(
-            device_type=devicetype, device_role=devicerole, name='TestDevice1', site=site
+            device_type=devicetype, role=role, name='TestDevice1', site=site
         )
         device2 = Device.objects.create(
-            device_type=devicetype, device_role=devicerole, name='TestDevice2', site=site
+            device_type=devicetype, role=role, name='TestDevice2', site=site
         )
         interface1 = Interface.objects.create(device=device1, name='eth0')
         interface2 = Interface.objects.create(device=device2, name='eth0')
@@ -485,7 +584,7 @@ class CableTestCase(TestCase):
 
         power_port1 = PowerPort.objects.create(device=device2, name='psu1')
         patch_pannel = Device.objects.create(
-            device_type=devicetype, device_role=devicerole, name='TestPatchPanel', site=site
+            device_type=devicetype, role=role, name='TestPatchPanel', site=site
         )
         rear_port1 = RearPort.objects.create(device=patch_pannel, name='RP1', type='8p8c')
         front_port1 = FrontPort.objects.create(
@@ -626,11 +725,11 @@ class VirtualDeviceContextTestCase(TestCase):
         devicetype = DeviceType.objects.create(
             manufacturer=manufacturer, model='Test Device Type 1', slug='test-device-type-1'
         )
-        devicerole = DeviceRole.objects.create(
+        role = DeviceRole.objects.create(
             name='Test Device Role 1', slug='test-device-role-1', color='ff0000'
         )
         Device.objects.create(
-            device_type=devicetype, device_role=devicerole, name='TestDevice1', site=site
+            device_type=devicetype, role=role, name='TestDevice1', site=site
         )
 
     def test_vdc_and_interface_creation(self):

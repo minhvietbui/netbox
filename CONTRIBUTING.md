@@ -14,14 +14,29 @@
 </div>
 <h3></h3>
 
-Some general tips for engaging here on GitHub:
+## :information_source: Welcome to the Stadium!
+
+In her book [Working in Public](https://www.amazon.com/Working-Public-Making-Maintenance-Software/dp/0578675862), Nadia Eghbal defines four production models for open source projects, categorized by contributor and user growth: federations, clubs, toys, and stadiums. The NetBox project fits her definition of a stadium very well:
+
+> Stadiums are projects with low contributor growth and high user growth. While they may receive casual contributions, their regular contributor base does not grow proportionately to their users. As a result, they tend to be powered by one or a few developers.
+
+The bulk of NetBox's development is carried out by a handful of core maintainers, with occasional contributions from collaborators in the community. We find the stadium analogy very useful in conveying the roles and obligations of both contributors and users.
+
+If you're a contributor, actively working on the center stage, you have an obligation to produce quality content that will benefit the project as a whole. Conversely, if you're in the audience consuming the work being produced, you have the option of making requests and suggestions, but must also recognize that contributors are under no obligation to act on them.
+
+NetBox users are welcome to participate in either role, on stage or in the crowd. We ask only that you acknowledge the role you've chosen and respect the roles of others.
+
+### General Tips for Working on GitHub
 
 * Register for a free [GitHub account](https://github.com/signup) if you haven't already.
 * You can use [GitHub Markdown](https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax) for formatting text and adding images.
 * To help mitigate notification spam, please avoid "bumping" issues with no activity. (To vote an issue up or down, use a :thumbsup: or :thumbsdown: reaction.)
 * Please avoid pinging members with `@` unless they've previously expressed interest or involvement with that particular issue.
+* Familiarize yourself with [this list of discussion anti-patterns](https://github.com/bradfitz/issue-tracker-behaviors) and make every effort to avoid them.
 
 ## :bug: Reporting Bugs
+
+:warning: Bug reports are used to call attention to some unintended or unexpected behavior in NetBox, such as when an error occurs or when the result of taking some action is inconsistent with the documentation. **Bug reports may not be used to suggest new functionality**; please see "feature requests" below if that is your goal.
 
 * First, ensure that you're running the [latest stable version](https://github.com/netbox-community/netbox/releases) of NetBox. If you're running an older version, it's likely that the bug has already been fixed.
 
@@ -71,11 +86,15 @@ intake policy](https://github.com/netbox-community/netbox/wiki/Issue-Intake-Poli
 
 * In most cases, it is not necessary to add a changelog entry: A maintainer will take care of this when the PR is merged. (This helps avoid merge conflicts resulting from multiple PRs being submitted simultaneously.)
 
-* All code submissions should meet the following criteria (CI will enforce these checks):
+* All code submissions must meet the following criteria (CI will enforce these checks where feasible):
+  * Consist entirely of original work
   * Python syntax is valid
   * All tests pass when run with `./manage.py test`
   * PEP 8 compliance is enforced, with the exception that lines may be
       greater than 80 characters in length
+
+> [!CAUTION]
+> Any contributions which include AI-generated or reproduced content will be rejected.
 
 * Some other tips to keep in mind:
   * If you'd like to volunteer for someone else's issue, please post a comment on that issue letting us know. (This will allow the maintainers to assign it to you.)
@@ -101,8 +120,6 @@ We're always looking for motivated individuals to join the maintainers team and 
 * Working experience in the field of network operations & engineering
 
 We generally ask that maintainers dedicate around four hours of work to the project each week on average, which includes both hands-on development and project management tasks such as issue triage. Maintainers are also encouraged (but not required) to attend our bi-weekly Zoom call to catch up on recent items.
-
-Many maintainers petition their employer to grant some of their paid time to work on NetBox. In doing so, your employer becomes eligible to be featured as a [NetBox sponsor](https://github.com/netbox-community/netbox/wiki/Sponsorship).
 
 Interested? You can contact our lead maintainer, Jeremy Stretch, at jeremy@netbox.dev or on the [NetDev Community Slack](https://netdev.chat/). We'd love to have you on the team!
 

@@ -9,6 +9,7 @@ from circuits.models import Provider
 from dcim.filtersets import InterfaceFilterSet
 from dcim.models import Interface, Site
 from netbox.views import generic
+from utilities.tables import get_table_ordering
 from utilities.utils import count_related
 from utilities.views import ViewTab, register_model_view
 from virtualization.filtersets import VMInterfaceFilterSet
@@ -17,7 +18,6 @@ from . import filtersets, forms, tables
 from .choices import PrefixStatusChoices
 from .constants import *
 from .models import *
-from .tables.l2vpn import L2VPNTable, L2VPNTerminationTable
 from .utils import add_requested_prefixes, add_available_ipaddresses, add_available_vlans
 
 
@@ -197,7 +197,7 @@ class RIRBulkDeleteView(generic.BulkDeleteView):
 #
 
 class ASNRangeListView(generic.ObjectListView):
-    queryset = ASNRange.objects.all()
+    queryset = ASNRange.objects.annotate_asn_counts()
     filterset = filtersets.ASNRangeFilterSet
     filterset_form = forms.ASNRangeFilterForm
     table = tables.ASNRangeTable
@@ -214,11 +214,11 @@ class ASNRangeASNsView(generic.ObjectChildrenView):
     child_model = ASN
     table = tables.ASNTable
     filterset = filtersets.ASNFilterSet
-    template_name = 'ipam/asnrange/asns.html'
+    template_name = 'generic/object_children.html'
     tab = ViewTab(
         label=_('ASNs'),
         badge=lambda x: x.get_child_asns().count(),
-        permission='ipam.view_asns',
+        permission='ipam.view_asn',
         weight=500
     )
 
@@ -246,18 +246,14 @@ class ASNRangeBulkImportView(generic.BulkImportView):
 
 
 class ASNRangeBulkEditView(generic.BulkEditView):
-    queryset = ASNRange.objects.annotate(
-        site_count=count_related(Site, 'asns')
-    )
+    queryset = ASNRange.objects.annotate_asn_counts()
     filterset = filtersets.ASNRangeFilterSet
     table = tables.ASNRangeTable
     form = forms.ASNRangeBulkEditForm
 
 
 class ASNRangeBulkDeleteView(generic.BulkDeleteView):
-    queryset = ASNRange.objects.annotate(
-        site_count=count_related(Site, 'asns')
-    )
+    queryset = ASNRange.objects.annotate_asn_counts()
     filterset = filtersets.ASNRangeFilterSet
     table = tables.ASNRangeTable
 
@@ -608,7 +604,7 @@ class PrefixIPAddressesView(generic.ObjectChildrenView):
         return parent.get_child_ips().restrict(request.user, 'view').prefetch_related('vrf', 'tenant', 'tenant__group')
 
     def prep_table_data(self, request, queryset, parent):
-        if not request.GET.get('q') and not request.GET.get('sort'):
+        if not request.GET.get('q') and not get_table_ordering(request, self.table):
             return add_available_ipaddresses(parent.prefix, queryset, parent.is_pool)
         return queryset
 
@@ -662,6 +658,26 @@ class IPRangeListView(generic.ObjectListView):
 @register_model_view(IPRange)
 class IPRangeView(generic.ObjectView):
     queryset = IPRange.objects.all()
+
+    def get_extra_context(self, request, instance):
+
+        # Parent prefixes table
+        parent_prefixes = Prefix.objects.restrict(request.user, 'view').filter(
+            Q(prefix__net_contains_or_equals=str(instance.start_address.ip)),
+            Q(prefix__net_contains_or_equals=str(instance.end_address.ip)),
+            vrf=instance.vrf
+        ).prefetch_related(
+            'site', 'role', 'tenant', 'vlan', 'role'
+        )
+        parent_prefixes_table = tables.PrefixTable(
+            list(parent_prefixes),
+            exclude=('vrf', 'utilization'),
+            orderable=False
+        )
+
+        return {
+            'parent_prefixes_table': parent_prefixes_table,
+        }
 
 
 @register_model_view(IPRange, 'ipaddresses', path='ip-addresses')
@@ -755,19 +771,9 @@ class IPAddressView(generic.ObjectView):
         # Limit to a maximum of 10 duplicates displayed here
         duplicate_ips_table = tables.IPAddressTable(duplicate_ips[:10], orderable=False)
 
-        # Related IP table
-        related_ips = IPAddress.objects.restrict(request.user, 'view').exclude(
-            address=str(instance.address)
-        ).filter(
-            vrf=instance.vrf, address__net_contained_or_equal=str(instance.address)
-        )
-        related_ips_table = tables.IPAddressTable(related_ips, orderable=False)
-        related_ips_table.configure(request)
-
         return {
             'parent_prefixes_table': parent_prefixes_table,
             'duplicate_ips_table': duplicate_ips_table,
-            'related_ips_table': related_ips_table,
         }
 
 
@@ -828,7 +834,6 @@ class IPAddressAssignView(generic.ObjectView):
         table = None
 
         if form.is_valid():
-
             addresses = self.queryset.prefetch_related('vrf', 'tenant')
             # Limit to 100 results
             addresses = filtersets.IPAddressFilterSet(request.POST, addresses).qs[:100]
@@ -872,14 +877,30 @@ class IPAddressBulkDeleteView(generic.BulkDeleteView):
     table = tables.IPAddressTable
 
 
+@register_model_view(IPAddress, 'related_ips', path='related-ip-addresses')
+class IPAddressRelatedIPsView(generic.ObjectChildrenView):
+    queryset = IPAddress.objects.prefetch_related('vrf__tenant', 'tenant')
+    child_model = IPAddress
+    table = tables.IPAddressTable
+    filterset = filtersets.IPAddressFilterSet
+    template_name = 'generic/object_children.html'
+    tab = ViewTab(
+        label=_('Related IPs'),
+        badge=lambda x: x.get_related_ips().count(),
+        weight=500,
+        hide_if_empty=True,
+    )
+
+    def get_children(self, request, parent):
+        return parent.get_related_ips().restrict(request.user, 'view')
+
+
 #
 # VLAN groups
 #
 
 class VLANGroupListView(generic.ObjectListView):
-    queryset = VLANGroup.objects.annotate(
-        vlan_count=count_related(VLAN, 'group')
-    )
+    queryset = VLANGroup.objects.annotate_utilization().prefetch_related('tags')
     filterset = filtersets.VLANGroupFilterSet
     filterset_form = forms.VLANGroupFilterForm
     table = tables.VLANGroupTable
@@ -887,28 +908,15 @@ class VLANGroupListView(generic.ObjectListView):
 
 @register_model_view(VLANGroup)
 class VLANGroupView(generic.ObjectView):
-    queryset = VLANGroup.objects.all()
+    queryset = VLANGroup.objects.annotate_utilization().prefetch_related('tags')
 
     def get_extra_context(self, request, instance):
         related_models = (
             (VLAN.objects.restrict(request.user, 'view').filter(group=instance), 'group_id'),
         )
 
-        # TODO: Replace with embedded table
-        vlans = VLAN.objects.restrict(request.user, 'view').filter(group=instance).prefetch_related(
-            Prefetch('prefixes', queryset=Prefix.objects.restrict(request.user)),
-            'tenant', 'site', 'role',
-        ).order_by('vid')
-        vlans = add_available_vlans(vlans, vlan_group=instance)
-
-        vlans_table = tables.VLANTable(vlans, user=request.user, exclude=('group',))
-        if request.user.has_perm('ipam.change_vlan') or request.user.has_perm('ipam.delete_vlan'):
-            vlans_table.columns.show('pk')
-        vlans_table.configure(request)
-
         return {
             'related_models': related_models,
-            'vlans_table': vlans_table,
         }
 
 
@@ -929,20 +937,42 @@ class VLANGroupBulkImportView(generic.BulkImportView):
 
 
 class VLANGroupBulkEditView(generic.BulkEditView):
-    queryset = VLANGroup.objects.annotate(
-        vlan_count=count_related(VLAN, 'group')
-    )
+    queryset = VLANGroup.objects.annotate_utilization().prefetch_related('tags')
     filterset = filtersets.VLANGroupFilterSet
     table = tables.VLANGroupTable
     form = forms.VLANGroupBulkEditForm
 
 
 class VLANGroupBulkDeleteView(generic.BulkDeleteView):
-    queryset = VLANGroup.objects.annotate(
-        vlan_count=count_related(VLAN, 'group')
-    )
+    queryset = VLANGroup.objects.annotate_utilization().prefetch_related('tags')
     filterset = filtersets.VLANGroupFilterSet
     table = tables.VLANGroupTable
+
+
+@register_model_view(VLANGroup, 'vlans')
+class VLANGroupVLANsView(generic.ObjectChildrenView):
+    queryset = VLANGroup.objects.all()
+    child_model = VLAN
+    table = tables.VLANTable
+    filterset = filtersets.VLANFilterSet
+    template_name = 'generic/object_children.html'
+    tab = ViewTab(
+        label=_('VLANs'),
+        badge=lambda x: x.get_child_vlans().count(),
+        permission='ipam.view_vlan',
+        weight=500
+    )
+
+    def get_children(self, request, parent):
+        return parent.get_child_vlans().restrict(request.user, 'view').prefetch_related(
+            Prefetch('prefixes', queryset=Prefix.objects.restrict(request.user)),
+            'tenant', 'site', 'role',
+        )
+
+    def prep_table_data(self, request, queryset, parent):
+        if not get_table_ordering(request, self.table):
+            return add_available_vlans(queryset, parent)
+        return queryset
 
 
 #
@@ -963,7 +993,6 @@ class FHRPGroupView(generic.ObjectView):
     queryset = FHRPGroup.objects.all()
 
     def get_extra_context(self, request, instance):
-
         # Get assigned interfaces
         members_table = tables.FHRPGroupAssignmentTable(
             data=FHRPGroupAssignment.objects.restrict(request.user, 'view').filter(group=instance),
@@ -1039,6 +1068,12 @@ class FHRPGroupAssignmentEditView(generic.ObjectEditView):
             instance.interface = get_object_or_404(content_type.model_class(), pk=request.GET.get('interface_id'))
         return instance
 
+    def get_extra_addanother_params(self, request):
+        return {
+            'interface_type': request.GET.get('interface_type'),
+            'interface_id': request.GET.get('interface_id'),
+        }
+
 
 @register_model_view(FHRPGroupAssignment, 'delete')
 class FHRPGroupAssignmentDeleteView(generic.ObjectDeleteView):
@@ -1077,7 +1112,7 @@ class VLANInterfacesView(generic.ObjectChildrenView):
     child_model = Interface
     table = tables.VLANDevicesTable
     filterset = InterfaceFilterSet
-    template_name = 'ipam/vlan/interfaces.html'
+    template_name = 'generic/object_children.html'
     tab = ViewTab(
         label=_('Device Interfaces'),
         badge=lambda x: x.get_interfaces().count(),
@@ -1095,7 +1130,7 @@ class VLANVMInterfacesView(generic.ObjectChildrenView):
     child_model = VMInterface
     table = tables.VLANVirtualMachinesTable
     filterset = VMInterfaceFilterSet
-    template_name = 'ipam/vlan/vminterfaces.html'
+    template_name = 'generic/object_children.html'
     tab = ViewTab(
         label=_('VM Interfaces'),
         badge=lambda x: x.get_vminterfaces().count(),
@@ -1232,107 +1267,3 @@ class ServiceBulkDeleteView(generic.BulkDeleteView):
     queryset = Service.objects.prefetch_related('device', 'virtual_machine')
     filterset = filtersets.ServiceFilterSet
     table = tables.ServiceTable
-
-
-# L2VPN
-
-class L2VPNListView(generic.ObjectListView):
-    queryset = L2VPN.objects.all()
-    table = L2VPNTable
-    filterset = filtersets.L2VPNFilterSet
-    filterset_form = forms.L2VPNFilterForm
-
-
-@register_model_view(L2VPN)
-class L2VPNView(generic.ObjectView):
-    queryset = L2VPN.objects.all()
-
-    def get_extra_context(self, request, instance):
-        import_targets_table = tables.RouteTargetTable(
-            instance.import_targets.prefetch_related('tenant'),
-            orderable=False
-        )
-        export_targets_table = tables.RouteTargetTable(
-            instance.export_targets.prefetch_related('tenant'),
-            orderable=False
-        )
-
-        return {
-            'import_targets_table': import_targets_table,
-            'export_targets_table': export_targets_table,
-        }
-
-
-@register_model_view(L2VPN, 'edit')
-class L2VPNEditView(generic.ObjectEditView):
-    queryset = L2VPN.objects.all()
-    form = forms.L2VPNForm
-
-
-@register_model_view(L2VPN, 'delete')
-class L2VPNDeleteView(generic.ObjectDeleteView):
-    queryset = L2VPN.objects.all()
-
-
-class L2VPNBulkImportView(generic.BulkImportView):
-    queryset = L2VPN.objects.all()
-    model_form = forms.L2VPNImportForm
-
-
-class L2VPNBulkEditView(generic.BulkEditView):
-    queryset = L2VPN.objects.all()
-    filterset = filtersets.L2VPNFilterSet
-    table = tables.L2VPNTable
-    form = forms.L2VPNBulkEditForm
-
-
-class L2VPNBulkDeleteView(generic.BulkDeleteView):
-    queryset = L2VPN.objects.all()
-    filterset = filtersets.L2VPNFilterSet
-    table = tables.L2VPNTable
-
-
-#
-# L2VPN terminations
-#
-
-class L2VPNTerminationListView(generic.ObjectListView):
-    queryset = L2VPNTermination.objects.all()
-    table = L2VPNTerminationTable
-    filterset = filtersets.L2VPNTerminationFilterSet
-    filterset_form = forms.L2VPNTerminationFilterForm
-
-
-@register_model_view(L2VPNTermination)
-class L2VPNTerminationView(generic.ObjectView):
-    queryset = L2VPNTermination.objects.all()
-
-
-@register_model_view(L2VPNTermination, 'edit')
-class L2VPNTerminationEditView(generic.ObjectEditView):
-    queryset = L2VPNTermination.objects.all()
-    form = forms.L2VPNTerminationForm
-    template_name = 'ipam/l2vpntermination_edit.html'
-
-
-@register_model_view(L2VPNTermination, 'delete')
-class L2VPNTerminationDeleteView(generic.ObjectDeleteView):
-    queryset = L2VPNTermination.objects.all()
-
-
-class L2VPNTerminationBulkImportView(generic.BulkImportView):
-    queryset = L2VPNTermination.objects.all()
-    model_form = forms.L2VPNTerminationImportForm
-
-
-class L2VPNTerminationBulkEditView(generic.BulkEditView):
-    queryset = L2VPNTermination.objects.all()
-    filterset = filtersets.L2VPNTerminationFilterSet
-    table = tables.L2VPNTerminationTable
-    form = forms.L2VPNTerminationBulkEditForm
-
-
-class L2VPNTerminationBulkDeleteView(generic.BulkDeleteView):
-    queryset = L2VPNTermination.objects.all()
-    filterset = filtersets.L2VPNTerminationFilterSet
-    table = tables.L2VPNTerminationTable

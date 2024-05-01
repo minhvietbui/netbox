@@ -6,57 +6,29 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
-import boto3
-from botocore.config import Config as Boto3Config
 from django import forms
 from django.conf import settings
 from django.utils.translation import gettext as _
-from dulwich import porcelain
-from dulwich.config import ConfigDict
 
-from netbox.registry import registry
-from .choices import DataSourceTypeChoices
+from netbox.data_backends import DataBackend
+from netbox.utils import register_data_backend
 from .exceptions import SyncError
 
 __all__ = (
-    'LocalBackend',
     'GitBackend',
+    'LocalBackend',
     'S3Backend',
 )
 
 logger = logging.getLogger('netbox.data_backends')
 
 
-def register_backend(name):
-    """
-    Decorator for registering a DataBackend class.
-    """
-
-    def _wrapper(cls):
-        registry['data_backends'][name] = cls
-        return cls
-
-    return _wrapper
-
-
-class DataBackend:
-    parameters = {}
-
-    def __init__(self, url, **kwargs):
-        self.url = url
-        self.params = kwargs
-
-    @property
-    def url_scheme(self):
-        return urlparse(self.url).scheme.lower()
-
-    @contextmanager
-    def fetch(self):
-        raise NotImplemented()
-
-
-@register_backend(DataSourceTypeChoices.LOCAL)
+@register_data_backend()
 class LocalBackend(DataBackend):
+    name = 'local'
+    label = _('Local')
+    is_local = True
+
     @contextmanager
     def fetch(self):
         logger.debug(f"Data source type is local; skipping fetch")
@@ -65,20 +37,22 @@ class LocalBackend(DataBackend):
         yield local_path
 
 
-@register_backend(DataSourceTypeChoices.GIT)
+@register_data_backend()
 class GitBackend(DataBackend):
+    name = 'git'
+    label = 'Git'
     parameters = {
         'username': forms.CharField(
             required=False,
             label=_('Username'),
             widget=forms.TextInput(attrs={'class': 'form-control'}),
-            help_text=_("Only used for cloning with HTTP / HTTPS"),
+            help_text=_("Only used for cloning with HTTP(S)"),
         ),
         'password': forms.CharField(
             required=False,
             label=_('Password'),
             widget=forms.TextInput(attrs={'class': 'form-control'}),
-            help_text=_("Only used for cloning with HTTP / HTTPS"),
+            help_text=_("Only used for cloning with HTTP(S)"),
         ),
         'branch': forms.CharField(
             required=False,
@@ -86,45 +60,59 @@ class GitBackend(DataBackend):
             widget=forms.TextInput(attrs={'class': 'form-control'})
         )
     }
+    sensitive_parameters = ['password']
+
+    def init_config(self):
+        from dulwich.config import ConfigDict
+
+        # Initialize backend config
+        config = ConfigDict()
+
+        # Apply HTTP proxy (if configured)
+        if settings.HTTP_PROXIES and self.url_scheme in ('http', 'https'):
+            if proxy := settings.HTTP_PROXIES.get(self.url_scheme):
+                config.set("http", "proxy", proxy)
+
+        return config
 
     @contextmanager
     def fetch(self):
+        from dulwich import porcelain
+
         local_path = tempfile.TemporaryDirectory()
 
-        config = ConfigDict()
         clone_args = {
             "branch": self.params.get('branch'),
-            "config": config,
+            "config": self.config,
             "depth": 1,
             "errstream": porcelain.NoneStream(),
             "quiet": True,
         }
 
         if self.url_scheme in ('http', 'https'):
-            clone_args.update(
-                {
-                    "username": self.params.get('username'),
-                    "password": self.params.get('password'),
-                }
-            )
-
-        if settings.HTTP_PROXIES and self.url_scheme in ('http', 'https'):
-            if proxy := settings.HTTP_PROXIES.get(self.url_scheme):
-                config.set("http", "proxy", proxy)
+            if self.params.get('username'):
+                clone_args.update(
+                    {
+                        "username": self.params.get('username'),
+                        "password": self.params.get('password'),
+                    }
+                )
 
         logger.debug(f"Cloning git repo: {self.url}")
         try:
             porcelain.clone(self.url, local_path.name, **clone_args)
         except BaseException as e:
-            raise SyncError(f"Fetching remote data failed ({type(e).__name__}): {e}")
+            raise SyncError(_("Fetching remote data failed ({name}): {error}").format(name=type(e).__name__, error=e))
 
         yield local_path.name
 
         local_path.cleanup()
 
 
-@register_backend(DataSourceTypeChoices.AMAZON_S3)
+@register_data_backend()
 class S3Backend(DataBackend):
+    name = 'amazon-s3'
+    label = 'Amazon S3'
     parameters = {
         'aws_access_key_id': forms.CharField(
             label=_('AWS access key ID'),
@@ -135,17 +123,23 @@ class S3Backend(DataBackend):
             widget=forms.TextInput(attrs={'class': 'form-control'})
         ),
     }
+    sensitive_parameters = ['aws_secret_access_key']
 
     REGION_REGEX = r's3\.([a-z0-9-]+)\.amazonaws\.com'
 
-    @contextmanager
-    def fetch(self):
-        local_path = tempfile.TemporaryDirectory()
+    def init_config(self):
+        from botocore.config import Config as Boto3Config
 
-        # Build the S3 configuration
-        s3_config = Boto3Config(
+        # Initialize backend config
+        return Boto3Config(
             proxies=settings.HTTP_PROXIES,
         )
+
+    @contextmanager
+    def fetch(self):
+        import boto3
+
+        local_path = tempfile.TemporaryDirectory()
 
         # Initialize the S3 resource and bucket
         aws_access_key_id = self.params.get('aws_access_key_id')
@@ -155,7 +149,8 @@ class S3Backend(DataBackend):
             region_name=self._region_name,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
-            config=s3_config
+            config=self.config,
+            endpoint_url=self._endpoint_url
         )
         bucket = s3.Bucket(self._bucket_name)
 
@@ -181,6 +176,11 @@ class S3Backend(DataBackend):
     def _bucket_name(self):
         url_path = urlparse(self.url).path.lstrip('/')
         return url_path.split('/')[0]
+
+    @property
+    def _endpoint_url(self):
+        url_path = urlparse(self.url)
+        return url_path._replace(params="", fragment="", query="", path="").geturl()
 
     @property
     def _remote_path(self):

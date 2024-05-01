@@ -15,11 +15,12 @@ from utilities.api import get_serializer_for_model
 
 __all__ = (
     'BriefModeMixin',
+    'BulkDestroyModelMixin',
     'BulkUpdateModelMixin',
     'CustomFieldsMixin',
     'ExportTemplatesMixin',
-    'BulkDestroyModelMixin',
     'ObjectValidationMixin',
+    'SequentialBulkCreatesMixin',
 )
 
 
@@ -55,8 +56,15 @@ class BriefModeMixin:
     def get_queryset(self):
         qs = super().get_queryset()
 
-        # If using brief mode, clear all prefetches from the queryset and append only brief_prefetch_fields (if any)
         if self.brief:
+            serializer_class = self.get_serializer_class()
+
+            # Clear any annotations for fields not present on the nested serializer
+            for annotation in list(qs.query.annotations.keys()):
+                if annotation not in serializer_class().fields:
+                    qs.query.annotations.pop(annotation)
+
+            # Clear any prefetches from the queryset and append only brief_prefetch_fields (if any)
             return qs.prefetch_related(None).prefetch_related(*self.brief_prefetch_fields)
 
         return qs
@@ -94,6 +102,30 @@ class ExportTemplatesMixin:
         return super().list(request, *args, **kwargs)
 
 
+class SequentialBulkCreatesMixin:
+    """
+    Perform bulk creation of new objects sequentially, rather than all at once. This ensures that any validation
+    which depends on the evaluation of existing objects (such as checking for free space within a rack) functions
+    appropriately.
+    """
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        if not isinstance(request.data, list):
+            # Creating a single object
+            return super().create(request, *args, **kwargs)
+
+        return_data = []
+        for data in request.data:
+            serializer = self.get_serializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            return_data.append(serializer.data)
+
+        headers = self.get_success_headers(serializer.data)
+
+        return Response(return_data, status=status.HTTP_201_CREATED, headers=headers)
+
+
 class BulkUpdateModelMixin:
     """
     Support bulk modification of objects using the list endpoint for a model. Accepts a PATCH action with a list of one
@@ -112,11 +144,14 @@ class BulkUpdateModelMixin:
         }
     ]
     """
+    def get_bulk_update_queryset(self):
+        return self.get_queryset()
+
     def bulk_update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
         serializer = BulkOperationSerializer(data=request.data, many=True)
         serializer.is_valid(raise_exception=True)
-        qs = self.get_queryset().filter(
+        qs = self.get_bulk_update_queryset().filter(
             pk__in=[o['id'] for o in serializer.data]
         )
 
@@ -159,10 +194,13 @@ class BulkDestroyModelMixin:
         {"id": 456}
     ]
     """
+    def get_bulk_destroy_queryset(self):
+        return self.get_queryset()
+
     def bulk_destroy(self, request, *args, **kwargs):
         serializer = BulkOperationSerializer(data=request.data, many=True)
         serializer.is_valid(raise_exception=True)
-        qs = self.get_queryset().filter(
+        qs = self.get_bulk_destroy_queryset().filter(
             pk__in=[o['id'] for o in serializer.data]
         )
 

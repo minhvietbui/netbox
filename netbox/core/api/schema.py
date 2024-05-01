@@ -1,5 +1,6 @@
 import re
 import typing
+from collections import OrderedDict
 
 from drf_spectacular.extensions import OpenApiSerializerFieldExtension
 from drf_spectacular.openapi import AutoSchema
@@ -7,6 +8,7 @@ from drf_spectacular.plumbing import (
     build_basic_type, build_choice_field, build_media_type_object, build_object_type, get_doc,
 )
 from drf_spectacular.types import OpenApiTypes
+from rest_framework import serializers
 from rest_framework.relations import ManyRelatedField
 
 from netbox.api.fields import ChoiceField, SerializedPKRelatedField
@@ -28,14 +30,19 @@ class ChoiceFieldFix(OpenApiSerializerFieldExtension):
     target_class = 'netbox.api.fields.ChoiceField'
 
     def map_serializer_field(self, auto_schema, direction):
+        build_cf = build_choice_field(self.target)
+
         if direction == 'request':
-            return build_choice_field(self.target)
+            return build_cf
 
         elif direction == "response":
+            value = build_cf
+            label = {**build_basic_type(OpenApiTypes.STR), "enum": list(OrderedDict.fromkeys(self.target.choices.values()))}
+
             return build_object_type(
                 properties={
-                    "value": build_basic_type(OpenApiTypes.STR),
-                    "label": build_basic_type(OpenApiTypes.STR),
+                    "value": value,
+                    "label": label
                 }
             )
 

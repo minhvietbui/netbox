@@ -1,21 +1,28 @@
+import traceback
+
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Prefetch, Sum
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.translation import gettext as _
+from jinja2.exceptions import TemplateError
 
 from dcim.filtersets import DeviceFilterSet
 from dcim.models import Device
 from dcim.tables import DeviceTable
 from extras.views import ObjectConfigContextView
-from ipam.models import IPAddress, Service
+from ipam.models import IPAddress
 from ipam.tables import InterfaceVLANTable
+from netbox.constants import DEFAULT_ACTION_PERMISSIONS
 from netbox.views import generic
+from tenancy.views import ObjectContactsView
+from utilities.query_functions import CollateAsChar
 from utilities.utils import count_related
 from utilities.views import ViewTab, register_model_view
 from . import filtersets, forms, tables
-from .models import Cluster, ClusterGroup, ClusterType, VirtualMachine, VMInterface
+from .models import *
 
 
 #
@@ -140,6 +147,11 @@ class ClusterGroupBulkDeleteView(generic.BulkDeleteView):
     table = tables.ClusterGroupTable
 
 
+@register_model_view(ClusterGroup, 'contacts')
+class ClusterGroupContactsView(ObjectContactsView):
+    queryset = ClusterGroup.objects.all()
+
+
 #
 # Clusters
 #
@@ -169,7 +181,7 @@ class ClusterVirtualMachinesView(generic.ObjectChildrenView):
     child_model = VirtualMachine
     table = tables.VirtualMachineTable
     filterset = filtersets.VirtualMachineFilterSet
-    template_name = 'virtualization/cluster/virtual_machines.html'
+    template_name = 'generic/object_children.html'
     tab = ViewTab(
         label=_('Virtual Machines'),
         badge=lambda obj: obj.virtual_machines.count(),
@@ -188,6 +200,13 @@ class ClusterDevicesView(generic.ObjectChildrenView):
     table = DeviceTable
     filterset = DeviceFilterSet
     template_name = 'virtualization/cluster/devices.html'
+    actions = {
+        'add': {'add'},
+        'import': {'add'},
+        'export': {'view'},
+        'bulk_edit': {'change'},
+        'bulk_remove_devices': {'change'},
+    }
     tab = ViewTab(
         label=_('Devices'),
         badge=lambda obj: obj.devices.count(),
@@ -312,6 +331,11 @@ class ClusterRemoveDevicesView(generic.ObjectEditView):
         })
 
 
+@register_model_view(Cluster, 'contacts')
+class ClusterContactsView(ObjectContactsView):
+    queryset = Cluster.objects.all()
+
+
 #
 # Virtual machines
 #
@@ -336,9 +360,13 @@ class VirtualMachineInterfacesView(generic.ObjectChildrenView):
     table = tables.VirtualMachineVMInterfaceTable
     filterset = filtersets.VMInterfaceFilterSet
     template_name = 'virtualization/virtualmachine/interfaces.html'
+    actions = {
+        **DEFAULT_ACTION_PERMISSIONS,
+        'bulk_rename': {'change'},
+    }
     tab = ViewTab(
         label=_('Interfaces'),
-        badge=lambda obj: obj.interfaces.count(),
+        badge=lambda obj: obj.interface_count,
         permission='virtualization.view_vminterface',
         weight=500
     )
@@ -350,15 +378,84 @@ class VirtualMachineInterfacesView(generic.ObjectChildrenView):
         )
 
 
+@register_model_view(VirtualMachine, 'disks')
+class VirtualMachineVirtualDisksView(generic.ObjectChildrenView):
+    queryset = VirtualMachine.objects.all()
+    child_model = VirtualDisk
+    table = tables.VirtualMachineVirtualDiskTable
+    filterset = filtersets.VirtualDiskFilterSet
+    template_name = 'virtualization/virtualmachine/virtual_disks.html'
+    tab = ViewTab(
+        label=_('Virtual Disks'),
+        badge=lambda obj: obj.virtual_disk_count,
+        permission='virtualization.view_virtualdisk',
+        weight=500
+    )
+    actions = {
+        **DEFAULT_ACTION_PERMISSIONS,
+        'bulk_rename': {'change'},
+    }
+
+    def get_children(self, request, parent):
+        return parent.virtualdisks.restrict(request.user, 'view').prefetch_related('tags')
+
+
 @register_model_view(VirtualMachine, 'configcontext', path='config-context')
 class VirtualMachineConfigContextView(ObjectConfigContextView):
     queryset = VirtualMachine.objects.annotate_config_context_data()
     base_template = 'virtualization/virtualmachine.html'
     tab = ViewTab(
         label=_('Config Context'),
-        permission='extras.view_configcontext',
         weight=2000
     )
+
+
+@register_model_view(VirtualMachine, 'render-config')
+class VirtualMachineRenderConfigView(generic.ObjectView):
+    queryset = VirtualMachine.objects.all()
+    template_name = 'virtualization/virtualmachine/render_config.html'
+    tab = ViewTab(
+        label=_('Render Config'),
+        weight=2100
+    )
+
+    def get(self, request, **kwargs):
+        instance = self.get_object(**kwargs)
+        context = self.get_extra_context(request, instance)
+
+        # If a direct export has been requested, return the rendered template content as a
+        # downloadable file.
+        if request.GET.get('export'):
+            response = HttpResponse(context['rendered_config'], content_type='text')
+            filename = f"{instance.name or 'config'}.txt"
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+
+        return render(request, self.get_template_name(), {
+            'object': instance,
+            'tab': self.tab,
+            **context,
+        })
+
+    def get_extra_context(self, request, instance):
+        # Compile context data
+        context_data = instance.get_config_context()
+        context_data.update({'virtualmachine': instance})
+
+        # Render the config template
+        rendered_config = None
+        if config_template := instance.get_config_template():
+            try:
+                rendered_config = config_template.render(context=context_data)
+            except TemplateError as e:
+                messages.error(request, f"An error occurred while rendering the template: {e}")
+                rendered_config = traceback.format_exc()
+
+        return {
+            'config_template': config_template,
+            'context_data': context_data,
+            'rendered_config': rendered_config,
+        }
 
 
 @register_model_view(VirtualMachine, 'edit')
@@ -390,6 +487,11 @@ class VirtualMachineBulkDeleteView(generic.BulkDeleteView):
     table = tables.VirtualMachineTable
 
 
+@register_model_view(VirtualMachine, 'contacts')
+class VirtualMachineContactsView(ObjectContactsView):
+    queryset = VirtualMachine.objects.all()
+
+
 #
 # VM interfaces
 #
@@ -399,7 +501,6 @@ class VMInterfaceListView(generic.ObjectListView):
     filterset = filtersets.VMInterfaceFilterSet
     filterset_form = forms.VMInterfaceFilterForm
     table = tables.VMInterfaceTable
-    actions = ('import', 'export', 'bulk_edit', 'bulk_delete')
 
 
 @register_model_view(VMInterface)
@@ -471,9 +572,66 @@ class VMInterfaceBulkRenameView(generic.BulkRenameView):
 
 
 class VMInterfaceBulkDeleteView(generic.BulkDeleteView):
-    queryset = VMInterface.objects.all()
+    # Ensure child interfaces are deleted prior to their parents
+    queryset = VMInterface.objects.order_by('virtual_machine', 'parent', CollateAsChar('_name'))
     filterset = filtersets.VMInterfaceFilterSet
     table = tables.VMInterfaceTable
+
+
+#
+# Virtual disks
+#
+
+class VirtualDiskListView(generic.ObjectListView):
+    queryset = VirtualDisk.objects.all()
+    filterset = filtersets.VirtualDiskFilterSet
+    filterset_form = forms.VirtualDiskFilterForm
+    table = tables.VirtualDiskTable
+
+
+@register_model_view(VirtualDisk)
+class VirtualDiskView(generic.ObjectView):
+    queryset = VirtualDisk.objects.all()
+
+
+class VirtualDiskCreateView(generic.ComponentCreateView):
+    queryset = VirtualDisk.objects.all()
+    form = forms.VirtualDiskCreateForm
+    model_form = forms.VirtualDiskForm
+
+
+@register_model_view(VirtualDisk, 'edit')
+class VirtualDiskEditView(generic.ObjectEditView):
+    queryset = VirtualDisk.objects.all()
+    form = forms.VirtualDiskForm
+
+
+@register_model_view(VirtualDisk, 'delete')
+class VirtualDiskDeleteView(generic.ObjectDeleteView):
+    queryset = VirtualDisk.objects.all()
+
+
+class VirtualDiskBulkImportView(generic.BulkImportView):
+    queryset = VirtualDisk.objects.all()
+    model_form = forms.VirtualDiskImportForm
+
+
+class VirtualDiskBulkEditView(generic.BulkEditView):
+    queryset = VirtualDisk.objects.all()
+    filterset = filtersets.VirtualDiskFilterSet
+    table = tables.VirtualDiskTable
+    form = forms.VirtualDiskBulkEditForm
+
+
+class VirtualDiskBulkRenameView(generic.BulkRenameView):
+    queryset = VirtualDisk.objects.all()
+    form = forms.VirtualDiskBulkRenameForm
+
+
+class VirtualDiskBulkDeleteView(generic.BulkDeleteView):
+    queryset = VirtualDisk.objects.all()
+    filterset = filtersets.VirtualDiskFilterSet
+    table = tables.VirtualDiskTable
 
 
 #
@@ -492,3 +650,17 @@ class VirtualMachineBulkAddInterfaceView(generic.BulkComponentCreateView):
 
     def get_required_permission(self):
         return f'virtualization.add_vminterface'
+
+
+class VirtualMachineBulkAddVirtualDiskView(generic.BulkComponentCreateView):
+    parent_model = VirtualMachine
+    parent_field = 'virtual_machine'
+    form = forms.VirtualDiskBulkCreateForm
+    queryset = VirtualDisk.objects.all()
+    model_form = forms.VirtualDiskForm
+    filterset = filtersets.VirtualMachineFilterSet
+    table = tables.VirtualMachineTable
+    default_return_url = 'virtualization:virtualmachine_list'
+
+    def get_required_permission(self):
+        return f'virtualization.add_virtualdisk'

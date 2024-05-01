@@ -19,11 +19,16 @@ class MyModel(models.Model):
 
 Every model includes by default a numeric primary key. This value is generated automatically by the database, and can be referenced as `pk` or `id`.
 
+!!! note
+    Model names should adhere to [PEP8](https://www.python.org/dev/peps/pep-0008/#class-names) standards and be CapWords (no underscores).  Using underscores in model names will result in problems with permissions.
+
 ## Enabling NetBox Features
 
 Plugin models can leverage certain NetBox features by inheriting from NetBox's `NetBoxModel` class. This class extends the plugin model to enable features unique to NetBox, including:
 
+* Bookmarks
 * Change logging
+* Cloning
 * Custom fields
 * Custom links
 * Custom validation
@@ -54,6 +59,10 @@ class MyModel(NetBoxModel):
 #### `docs_url`
 
 This attribute specifies the URL at which the documentation for this model can be reached. By default, it will return `/static/docs/models/<app_label>/<model_name>/`. Plugin models can override this to return a custom URL. For example, you might direct the user to your plugin's documentation hosted on [ReadTheDocs](https://readthedocs.org/).
+
+#### `_netbox_private`
+
+By default, any model introduced by a plugin will appear in the list of available object types e.g. when creating a custom field or certain dashboard widgets. If your model is intended only for "behind the scenes use" and should not be exposed to end users, set `_netbox_private` to True. This will omit it from the list of general-purpose object types.
 
 ### Enabling Features Individually
 
@@ -102,6 +111,8 @@ For more information about database migrations, see the [Django documentation](h
 !!! warning
     Please note that only the classes which appear in this documentation are currently supported. Although other classes may be present within the `features` module, they are not yet supported for use by plugins.
 
+::: netbox.models.features.BookmarksMixin
+
 ::: netbox.models.features.ChangeLoggingMixin
 
 ::: netbox.models.features.CloningMixin
@@ -112,13 +123,16 @@ For more information about database migrations, see the [Django documentation](h
 
 ::: netbox.models.features.CustomValidationMixin
 
+::: netbox.models.features.EventRulesMixin
+
+!!! note
+    `EventRulesMixin` was renamed from `WebhooksMixin` in NetBox v3.7.
+
 ::: netbox.models.features.ExportTemplatesMixin
 
 ::: netbox.models.features.JournalingMixin
 
 ::: netbox.models.features.TagsMixin
-
-::: netbox.models.features.WebhooksMixin
 
 ## Choice Sets
 

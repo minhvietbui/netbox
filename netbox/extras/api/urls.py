@@ -7,11 +7,14 @@ from . import views
 router = NetBoxRouter()
 router.APIRootView = views.ExtrasRootView
 
+router.register('event-rules', views.EventRuleViewSet)
 router.register('webhooks', views.WebhookViewSet)
 router.register('custom-fields', views.CustomFieldViewSet)
+router.register('custom-field-choice-sets', views.CustomFieldChoiceSetViewSet)
 router.register('custom-links', views.CustomLinkViewSet)
 router.register('export-templates', views.ExportTemplateViewSet)
 router.register('saved-filters', views.SavedFilterViewSet)
+router.register('bookmarks', views.BookmarkViewSet)
 router.register('tags', views.TagViewSet)
 router.register('image-attachments', views.ImageAttachmentViewSet)
 router.register('journal-entries', views.JournalEntryViewSet)

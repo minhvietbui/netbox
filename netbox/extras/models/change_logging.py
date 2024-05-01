@@ -1,11 +1,13 @@
-from django.contrib.auth.models import User
+from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
-from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.urls import reverse
+from django.utils.translation import gettext_lazy as _
 
+from core.models import ContentType
 from extras.choices import *
-from utilities.querysets import RestrictedQuerySet
+from ..querysets import ObjectChangeQuerySet
 
 __all__ = (
     'ObjectChange',
@@ -19,31 +21,35 @@ class ObjectChange(models.Model):
     parent device. This will ensure changes made to component models appear in the parent model's changelog.
     """
     time = models.DateTimeField(
+        verbose_name=_('time'),
         auto_now_add=True,
         editable=False,
         db_index=True
     )
     user = models.ForeignKey(
-        to=User,
+        to=settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         related_name='changes',
         blank=True,
         null=True
     )
     user_name = models.CharField(
+        verbose_name=_('user name'),
         max_length=150,
         editable=False
     )
     request_id = models.UUIDField(
+        verbose_name=_('request ID'),
         editable=False,
         db_index=True
     )
     action = models.CharField(
+        verbose_name=_('action'),
         max_length=50,
         choices=ObjectChangeActionChoices
     )
     changed_object_type = models.ForeignKey(
-        to=ContentType,
+        to='contenttypes.ContentType',
         on_delete=models.PROTECT,
         related_name='+'
     )
@@ -53,7 +59,7 @@ class ObjectChange(models.Model):
         fk_field='changed_object_id'
     )
     related_object_type = models.ForeignKey(
-        to=ContentType,
+        to='contenttypes.ContentType',
         on_delete=models.PROTECT,
         related_name='+',
         blank=True,
@@ -72,20 +78,28 @@ class ObjectChange(models.Model):
         editable=False
     )
     prechange_data = models.JSONField(
+        verbose_name=_('pre-change data'),
         editable=False,
         blank=True,
         null=True
     )
     postchange_data = models.JSONField(
+        verbose_name=_('post-change data'),
         editable=False,
         blank=True,
         null=True
     )
 
-    objects = RestrictedQuerySet.as_manager()
+    objects = ObjectChangeQuerySet.as_manager()
 
     class Meta:
         ordering = ['-time']
+        indexes = (
+            models.Index(fields=('changed_object_type', 'changed_object_id')),
+            models.Index(fields=('related_object_type', 'related_object_id')),
+        )
+        verbose_name = _('object change')
+        verbose_name_plural = _('object changes')
 
     def __str__(self):
         return '{} {} {} by {}'.format(
@@ -94,6 +108,17 @@ class ObjectChange(models.Model):
             self.get_action_display().lower(),
             self.user_name
         )
+
+    def clean(self):
+        super().clean()
+
+        # Validate the assigned object type
+        if self.changed_object_type not in ContentType.objects.with_feature('change_logging'):
+            raise ValidationError(
+                _("Change logging is not supported for this object type ({type}).").format(
+                    type=self.changed_object_type
+                )
+            )
 
     def save(self, *args, **kwargs):
 
@@ -110,3 +135,7 @@ class ObjectChange(models.Model):
 
     def get_action_color(self):
         return ObjectChangeActionChoices.colors.get(self.action)
+
+    @property
+    def has_changes(self):
+        return self.prechange_data != self.postchange_data

@@ -1,17 +1,22 @@
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.urls import reverse
+from django.utils.translation import gettext as _
 from rest_framework import status
 
 from dcim.choices import *
 from dcim.constants import *
 from dcim.models import *
+from extras.models import ConfigTemplate
 from ipam.models import ASN, RIR, VLAN, VRF
 from netbox.api.serializers import GenericObjectSerializer
 from utilities.testing import APITestCase, APIViewTestCases, create_test_device
 from virtualization.models import Cluster, ClusterType
 from wireless.choices import WirelessChannelChoices
 from wireless.models import WirelessLAN
+
+
+User = get_user_model()
 
 
 class AppTest(APITestCase):
@@ -37,11 +42,11 @@ class Mixins:
             peer_device = Device.objects.create(
                 site=Site.objects.first(),
                 device_type=DeviceType.objects.first(),
-                device_role=DeviceRole.objects.first(),
+                role=DeviceRole.objects.first(),
                 name='Peer Device'
             )
             if self.peer_termination_type is None:
-                raise NotImplementedError("Test case must set peer_termination_type")
+                raise NotImplementedError(_("Test case must set peer_termination_type"))
             peer_obj = self.peer_termination_type.objects.create(
                 device=peer_device,
                 name='Peer Termination'
@@ -1049,12 +1054,12 @@ class DeviceRoleTest(APIViewTestCases.APIViewTestCase):
     @classmethod
     def setUpTestData(cls):
 
-        device_roles = (
+        roles = (
             DeviceRole(name='Device Role 1', slug='device-role-1', color='ff0000'),
             DeviceRole(name='Device Role 2', slug='device-role-2', color='00ff00'),
             DeviceRole(name='Device Role 3', slug='device-role-3', color='0000ff'),
         )
-        DeviceRole.objects.bulk_create(device_roles)
+        DeviceRole.objects.bulk_create(roles)
 
 
 class PlatformTest(APIViewTestCases.APIViewTestCase):
@@ -1115,15 +1120,15 @@ class DeviceTest(APIViewTestCases.APIViewTestCase):
 
         device_types = (
             DeviceType(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1'),
-            DeviceType(manufacturer=manufacturer, model='Device Type 2', slug='device-type-2'),
+            DeviceType(manufacturer=manufacturer, model='Device Type 2', slug='device-type-2', u_height=2),
         )
         DeviceType.objects.bulk_create(device_types)
 
-        device_roles = (
+        roles = (
             DeviceRole(name='Device Role 1', slug='device-role-1', color='ff0000'),
             DeviceRole(name='Device Role 2', slug='device-role-2', color='00ff00'),
         )
-        DeviceRole.objects.bulk_create(device_roles)
+        DeviceRole.objects.bulk_create(roles)
 
         cluster_type = ClusterType.objects.create(name='Cluster Type 1', slug='cluster-type-1')
 
@@ -1136,7 +1141,7 @@ class DeviceTest(APIViewTestCases.APIViewTestCase):
         devices = (
             Device(
                 device_type=device_types[0],
-                device_role=device_roles[0],
+                role=roles[0],
                 name='Device 1',
                 site=sites[0],
                 rack=racks[0],
@@ -1145,7 +1150,7 @@ class DeviceTest(APIViewTestCases.APIViewTestCase):
             ),
             Device(
                 device_type=device_types[0],
-                device_role=device_roles[0],
+                role=roles[0],
                 name='Device 2',
                 site=sites[0],
                 rack=racks[0],
@@ -1154,7 +1159,7 @@ class DeviceTest(APIViewTestCases.APIViewTestCase):
             ),
             Device(
                 device_type=device_types[0],
-                device_role=device_roles[0],
+                role=roles[0],
                 name='Device 3',
                 site=sites[0],
                 rack=racks[0],
@@ -1167,7 +1172,7 @@ class DeviceTest(APIViewTestCases.APIViewTestCase):
         cls.create_data = [
             {
                 'device_type': device_types[1].pk,
-                'device_role': device_roles[1].pk,
+                'role': roles[1].pk,
                 'name': 'Test Device 4',
                 'site': sites[1].pk,
                 'rack': racks[1].pk,
@@ -1175,7 +1180,7 @@ class DeviceTest(APIViewTestCases.APIViewTestCase):
             },
             {
                 'device_type': device_types[1].pk,
-                'device_role': device_roles[1].pk,
+                'role': roles[1].pk,
                 'name': 'Test Device 5',
                 'site': sites[1].pk,
                 'rack': racks[1].pk,
@@ -1183,7 +1188,7 @@ class DeviceTest(APIViewTestCases.APIViewTestCase):
             },
             {
                 'device_type': device_types[1].pk,
-                'device_role': device_roles[1].pk,
+                'role': roles[1].pk,
                 'name': 'Test Device 6',
                 'site': sites[1].pk,
                 'rack': racks[1].pk,
@@ -1218,7 +1223,7 @@ class DeviceTest(APIViewTestCases.APIViewTestCase):
         device = Device.objects.first()
         data = {
             'device_type': device.device_type.pk,
-            'device_role': device.device_role.pk,
+            'role': device.role.pk,
             'site': device.site.pk,
             'name': device.name,
         }
@@ -1228,6 +1233,55 @@ class DeviceTest(APIViewTestCases.APIViewTestCase):
         response = self.client.post(url, data, format='json', **self.header)
 
         self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+
+    def test_rack_fit(self):
+        """
+        Check that creating multiple devices with overlapping position fails.
+        """
+        device = Device.objects.first()
+        device_type = DeviceType.objects.all()[1]
+        data = [
+            {
+                'device_type': device_type.pk,
+                'role': device.role.pk,
+                'site': device.site.pk,
+                'name': 'Test Device 7',
+                'rack': device.rack.pk,
+                'face': 'front',
+                'position': 1
+            },
+            {
+                'device_type': device_type.pk,
+                'role': device.role.pk,
+                'site': device.site.pk,
+                'name': 'Test Device 8',
+                'rack': device.rack.pk,
+                'face': 'front',
+                'position': 2
+            }
+        ]
+
+        self.add_permissions('dcim.add_device')
+        url = reverse('dcim-api:device-list')
+        response = self.client.post(url, data, format='json', **self.header)
+
+        self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
+
+    def test_render_config(self):
+        configtemplate = ConfigTemplate.objects.create(
+            name='Config Template 1',
+            template_code='Config for device {{ device.name }}'
+        )
+
+        device = Device.objects.first()
+        device.config_template = configtemplate
+        device.save()
+
+        self.add_permissions('dcim.add_device')
+        url = reverse('dcim-api:device-detail', kwargs={'pk': device.pk}) + 'render-config/'
+        response = self.client.post(url, {}, format='json', **self.header)
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+        self.assertEqual(response.data['content'], f'Config for device {device.name}')
 
 
 class ModuleTest(APIViewTestCases.APIViewTestCase):
@@ -1307,8 +1361,8 @@ class ConsolePortTest(Mixins.ComponentTraceMixin, APIViewTestCases.APIViewTestCa
         manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
         site = Site.objects.create(name='Site 1', slug='site-1')
-        devicerole = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
-        device = Device.objects.create(device_type=devicetype, device_role=devicerole, name='Device 1', site=site)
+        role = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
+        device = Device.objects.create(device_type=devicetype, role=role, name='Device 1', site=site)
 
         console_ports = (
             ConsolePort(device=device, name='Console Port 1'),
@@ -1349,8 +1403,8 @@ class ConsoleServerPortTest(Mixins.ComponentTraceMixin, APIViewTestCases.APIView
         manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
         site = Site.objects.create(name='Site 1', slug='site-1')
-        devicerole = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
-        device = Device.objects.create(device_type=devicetype, device_role=devicerole, name='Device 1', site=site)
+        role = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
+        device = Device.objects.create(device_type=devicetype, role=role, name='Device 1', site=site)
 
         console_server_ports = (
             ConsoleServerPort(device=device, name='Console Server Port 1'),
@@ -1391,8 +1445,8 @@ class PowerPortTest(Mixins.ComponentTraceMixin, APIViewTestCases.APIViewTestCase
         manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
         site = Site.objects.create(name='Site 1', slug='site-1')
-        devicerole = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
-        device = Device.objects.create(device_type=devicetype, device_role=devicerole, name='Device 1', site=site)
+        role = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
+        device = Device.objects.create(device_type=devicetype, role=role, name='Device 1', site=site)
 
         power_ports = (
             PowerPort(device=device, name='Power Port 1'),
@@ -1430,8 +1484,8 @@ class PowerOutletTest(Mixins.ComponentTraceMixin, APIViewTestCases.APIViewTestCa
         manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
         site = Site.objects.create(name='Site 1', slug='site-1')
-        devicerole = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
-        device = Device.objects.create(device_type=devicetype, device_role=devicerole, name='Device 1', site=site)
+        role = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
+        device = Device.objects.create(device_type=devicetype, role=role, name='Device 1', site=site)
 
         power_ports = (
             PowerPort(device=device, name='Power Port 1'),
@@ -1478,8 +1532,8 @@ class InterfaceTest(Mixins.ComponentTraceMixin, APIViewTestCases.APIViewTestCase
         manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
         site = Site.objects.create(name='Site 1', slug='site-1')
-        devicerole = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
-        device = Device.objects.create(device_type=devicetype, device_role=devicerole, name='Device 1', site=site)
+        role = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
+        device = Device.objects.create(device_type=devicetype, role=role, name='Device 1', site=site)
 
         interfaces = (
             Interface(device=device, name='Interface 1', type='1000base-t'),
@@ -1571,6 +1625,33 @@ class InterfaceTest(Mixins.ComponentTraceMixin, APIViewTestCases.APIViewTestCase
             },
         ]
 
+    def test_bulk_delete_child_interfaces(self):
+        interface1 = Interface.objects.get(name='Interface 1')
+        device = interface1.device
+        self.add_permissions('dcim.delete_interface')
+
+        # Create a child interface
+        child = Interface.objects.create(
+            device=device,
+            name='Interface 1A',
+            type=InterfaceTypeChoices.TYPE_VIRTUAL,
+            parent=interface1
+        )
+        self.assertEqual(device.interfaces.count(), 4)
+
+        # Attempt to delete only the parent interface
+        url = self._get_detail_url(interface1)
+        self.client.delete(url, **self.header)
+        self.assertEqual(device.interfaces.count(), 4)  # Parent was not deleted
+
+        # Attempt to bulk delete parent & child together
+        data = [
+            {"id": interface1.pk},
+            {"id": child.pk},
+        ]
+        self.client.delete(self._get_list_url(), data, format='json', **self.header)
+        self.assertEqual(device.interfaces.count(), 2)  # Child & parent were both deleted
+
 
 class FrontPortTest(APIViewTestCases.APIViewTestCase):
     model = FrontPort
@@ -1585,8 +1666,8 @@ class FrontPortTest(APIViewTestCases.APIViewTestCase):
         manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
         site = Site.objects.create(name='Site 1', slug='site-1')
-        devicerole = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
-        device = Device.objects.create(device_type=devicetype, device_role=devicerole, name='Device 1', site=site)
+        role = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
+        device = Device.objects.create(device_type=devicetype, role=role, name='Device 1', site=site)
 
         rear_ports = (
             RearPort(device=device, name='Rear Port 1', type=PortTypeChoices.TYPE_8P8C),
@@ -1643,8 +1724,8 @@ class RearPortTest(APIViewTestCases.APIViewTestCase):
         manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
         site = Site.objects.create(name='Site 1', slug='site-1')
-        devicerole = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
-        device = Device.objects.create(device_type=devicetype, device_role=devicerole, name='Device 1', site=site)
+        role = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
+        device = Device.objects.create(device_type=devicetype, role=role, name='Device 1', site=site)
 
         rear_ports = (
             RearPort(device=device, name='Rear Port 1', type=PortTypeChoices.TYPE_8P8C),
@@ -1674,7 +1755,7 @@ class RearPortTest(APIViewTestCases.APIViewTestCase):
 
 class ModuleBayTest(APIViewTestCases.APIViewTestCase):
     model = ModuleBay
-    brief_fields = ['display', 'id', 'module', 'name', 'url']
+    brief_fields = ['display', 'id', 'installed_module', 'name', 'url']
     bulk_update_data = {
         'description': 'New description',
     }
@@ -1683,10 +1764,10 @@ class ModuleBayTest(APIViewTestCases.APIViewTestCase):
     def setUpTestData(cls):
         manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
         site = Site.objects.create(name='Site 1', slug='site-1')
-        devicerole = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
+        role = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
 
         device_type = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
-        device = Device.objects.create(device_type=device_type, device_role=devicerole, name='Device 1', site=site)
+        device = Device.objects.create(device_type=device_type, role=role, name='Device 1', site=site)
 
         device_bays = (
             ModuleBay(device=device, name='Device Bay 1'),
@@ -1722,7 +1803,7 @@ class DeviceBayTest(APIViewTestCases.APIViewTestCase):
     def setUpTestData(cls):
         manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
         site = Site.objects.create(name='Site 1', slug='site-1')
-        devicerole = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
+        role = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
 
         device_types = (
             DeviceType(
@@ -1741,10 +1822,10 @@ class DeviceBayTest(APIViewTestCases.APIViewTestCase):
         DeviceType.objects.bulk_create(device_types)
 
         devices = (
-            Device(device_type=device_types[0], device_role=devicerole, name='Device 1', site=site),
-            Device(device_type=device_types[1], device_role=devicerole, name='Device 2', site=site),
-            Device(device_type=device_types[1], device_role=devicerole, name='Device 3', site=site),
-            Device(device_type=device_types[1], device_role=devicerole, name='Device 4', site=site),
+            Device(device_type=device_types[0], role=role, name='Device 1', site=site),
+            Device(device_type=device_types[1], role=role, name='Device 2', site=site),
+            Device(device_type=device_types[1], role=role, name='Device 3', site=site),
+            Device(device_type=device_types[1], role=role, name='Device 4', site=site),
         )
         Device.objects.bulk_create(devices)
 
@@ -1786,8 +1867,8 @@ class InventoryItemTest(APIViewTestCases.APIViewTestCase):
         manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
         site = Site.objects.create(name='Site 1', slug='site-1')
-        devicerole = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
-        device = Device.objects.create(device_type=devicetype, device_role=devicerole, name='Device 1', site=site)
+        role = DeviceRole.objects.create(name='Test Device Role 1', slug='test-device-role-1', color='ff0000')
+        device = Device.objects.create(device_type=devicetype, role=role, name='Device 1', site=site)
 
         roles = (
             InventoryItemRole(name='Inventory Item Role 1', slug='inventory-item-role-1'),
@@ -1896,11 +1977,11 @@ class CableTest(APIViewTestCases.APIViewTestCase):
         site = Site.objects.create(name='Site 1', slug='site-1')
         manufacturer = Manufacturer.objects.create(name='Manufacturer 1', slug='manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
-        devicerole = DeviceRole.objects.create(name='Device Role 1', slug='device-role-1', color='ff0000')
+        role = DeviceRole.objects.create(name='Device Role 1', slug='device-role-1', color='ff0000')
 
         devices = (
-            Device(device_type=devicetype, device_role=devicerole, name='Device 1', site=site),
-            Device(device_type=devicetype, device_role=devicerole, name='Device 2', site=site),
+            Device(device_type=devicetype, role=role, name='Device 1', site=site),
+            Device(device_type=devicetype, role=role, name='Device 2', site=site),
         )
         Device.objects.bulk_create(devices)
 
@@ -1962,10 +2043,10 @@ class ConnectedDeviceTest(APITestCase):
         site = Site.objects.create(name='Site 1', slug='site-1')
         manufacturer = Manufacturer.objects.create(name='Manufacturer 1', slug='manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
-        devicerole = DeviceRole.objects.create(name='Device Role 1', slug='device-role-1', color='ff0000')
+        role = DeviceRole.objects.create(name='Device Role 1', slug='device-role-1', color='ff0000')
         devices = (
-            Device(device_type=devicetype, device_role=devicerole, name='TestDevice1', site=site),
-            Device(device_type=devicetype, device_role=devicerole, name='TestDevice2', site=site),
+            Device(device_type=devicetype, role=role, name='TestDevice1', site=site),
+            Device(device_type=devicetype, role=role, name='TestDevice2', site=site),
         )
         Device.objects.bulk_create(devices)
         interfaces = (
@@ -2001,21 +2082,21 @@ class VirtualChassisTest(APIViewTestCases.APIViewTestCase):
         site = Site.objects.create(name='Test Site', slug='test-site')
         manufacturer = Manufacturer.objects.create(name='Manufacturer 1', slug='manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type', slug='device-type')
-        devicerole = DeviceRole.objects.create(name='Device Role', slug='device-role', color='ff0000')
+        role = DeviceRole.objects.create(name='Device Role', slug='device-role', color='ff0000')
 
         devices = (
-            Device(name='Device 1', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 2', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 3', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 4', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 5', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 6', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 7', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 8', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 9', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 10', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 11', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 12', device_type=devicetype, device_role=devicerole, site=site),
+            Device(name='Device 1', device_type=devicetype, role=role, site=site),
+            Device(name='Device 2', device_type=devicetype, role=role, site=site),
+            Device(name='Device 3', device_type=devicetype, role=role, site=site),
+            Device(name='Device 4', device_type=devicetype, role=role, site=site),
+            Device(name='Device 5', device_type=devicetype, role=role, site=site),
+            Device(name='Device 6', device_type=devicetype, role=role, site=site),
+            Device(name='Device 7', device_type=devicetype, role=role, site=site),
+            Device(name='Device 8', device_type=devicetype, role=role, site=site),
+            Device(name='Device 9', device_type=devicetype, role=role, site=site),
+            Device(name='Device 10', device_type=devicetype, role=role, site=site),
+            Device(name='Device 11', device_type=devicetype, role=role, site=site),
+            Device(name='Device 12', device_type=devicetype, role=role, site=site),
         )
         Device.objects.bulk_create(devices)
 
@@ -2189,12 +2270,12 @@ class VirtualDeviceContextTest(APIViewTestCases.APIViewTestCase):
         site = Site.objects.create(name='Test Site', slug='test-site')
         manufacturer = Manufacturer.objects.create(name='Manufacturer 1', slug='manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type', slug='device-type')
-        devicerole = DeviceRole.objects.create(name='Device Role', slug='device-role', color='ff0000')
+        role = DeviceRole.objects.create(name='Device Role', slug='device-role', color='ff0000')
 
         devices = (
-            Device(name='Device 1', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 2', device_type=devicetype, device_role=devicerole, site=site),
-            Device(name='Device 3', device_type=devicetype, device_role=devicerole, site=site),
+            Device(name='Device 1', device_type=devicetype, role=role, site=site),
+            Device(name='Device 2', device_type=devicetype, role=role, site=site),
+            Device(name='Device 3', device_type=devicetype, role=role, site=site),
         )
         Device.objects.bulk_create(devices)
 

@@ -1,12 +1,16 @@
+import json
 import logging
 import re
 from contextlib import contextmanager
 
-from django.contrib.auth.models import Permission, User
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
+from django.contrib.contenttypes.models import ContentType
 from django.utils.text import slugify
 
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
-from extras.models import Tag
+from extras.choices import CustomFieldTypeChoices
+from extras.models import CustomField, Tag
 from virtualization.models import Cluster, ClusterType, VirtualMachine
 
 
@@ -43,7 +47,7 @@ def create_test_device(name, site=None, **attrs):
     manufacturer, _ = Manufacturer.objects.get_or_create(name='Manufacturer 1', slug='manufacturer-1')
     devicetype, _ = DeviceType.objects.get_or_create(model='Device Type 1', manufacturer=manufacturer)
     devicerole, _ = DeviceRole.objects.get_or_create(name='Device Role 1', slug='device-role-1')
-    device = Device.objects.create(name=name, site=site, device_type=devicetype, device_role=devicerole, **attrs)
+    device = Device.objects.create(name=name, site=site, device_type=devicetype, role=devicerole, **attrs)
 
     return device
 
@@ -63,7 +67,7 @@ def create_test_user(username='testuser', permissions=None):
     """
     Create a User with the given permissions.
     """
-    user = User.objects.create_user(username=username)
+    user = get_user_model().objects.create_user(username=username)
     if permissions is None:
         permissions = ()
     for perm_name in permissions:
@@ -101,3 +105,42 @@ def disable_warnings(logger_name):
     logger.setLevel(logging.ERROR)
     yield
     logger.setLevel(current_level)
+
+
+#
+# Custom field testing
+#
+
+DUMMY_CF_DATA = {
+    'text_field': 'foo123',
+    'integer_field': 456,
+    'decimal_field': 456.12,
+    'boolean_field': True,
+    'json_field': {'abc': 123},
+}
+
+
+def add_custom_field_data(form_data, model):
+    """
+    Create some custom fields for the model and add a value for each to the form data.
+
+    Args:
+        form_data: The dictionary of form data to be updated
+        model: The model of the object the form seeks to create or modify
+    """
+    content_type = ContentType.objects.get_for_model(model)
+    custom_fields = (
+        CustomField(type=CustomFieldTypeChoices.TYPE_TEXT, name='text_field', default='foo'),
+        CustomField(type=CustomFieldTypeChoices.TYPE_INTEGER, name='integer_field', default=123),
+        CustomField(type=CustomFieldTypeChoices.TYPE_DECIMAL, name='decimal_field', default=123.45),
+        CustomField(type=CustomFieldTypeChoices.TYPE_BOOLEAN, name='boolean_field', default=False),
+        CustomField(type=CustomFieldTypeChoices.TYPE_JSON, name='json_field', default='{"x": "y"}'),
+    )
+    CustomField.objects.bulk_create(custom_fields)
+    for cf in custom_fields:
+        cf.content_types.set([content_type])
+
+    form_data.update({
+        f'cf_{k}': v if type(v) is str else json.dumps(v)
+        for k, v in DUMMY_CF_DATA.items()
+    })

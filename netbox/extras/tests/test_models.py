@@ -1,8 +1,10 @@
+from django.contrib.contenttypes.models import ContentType
 from django.test import TestCase
 
 from dcim.models import Device, DeviceRole, DeviceType, Location, Manufacturer, Platform, Region, Site, SiteGroup
 from extras.models import ConfigContext, Tag
 from tenancy.models import Tenant, TenantGroup
+from utilities.exceptions import AbortRequest
 from virtualization.models import Cluster, ClusterGroup, ClusterType, VirtualMachine
 
 
@@ -13,6 +15,22 @@ class TagTest(TestCase):
         tag.save()
 
         self.assertEqual(tag.slug, 'testing-unicode-台灣')
+
+    def test_object_type_validation(self):
+        region = Region.objects.create(name='Region 1', slug='region-1')
+        sitegroup = SiteGroup.objects.create(name='Site Group 1', slug='site-group-1')
+
+        # Create a Tag that can only be applied to Regions
+        tag = Tag.objects.create(name='Tag 1', slug='tag-1')
+        tag.object_types.add(ContentType.objects.get_by_natural_key('dcim', 'region'))
+
+        # Apply the Tag to a Region
+        region.tags.add(tag)
+        self.assertIn(tag, region.tags.all())
+
+        # Apply the Tag to a SiteGroup
+        with self.assertRaises(AbortRequest):
+            sitegroup.tags.add(tag)
 
 
 class ConfigContextTest(TestCase):
@@ -26,7 +44,7 @@ class ConfigContextTest(TestCase):
 
         manufacturer = Manufacturer.objects.create(name='Manufacturer 1', slug='manufacturer-1')
         devicetype = DeviceType.objects.create(manufacturer=manufacturer, model='Device Type 1', slug='device-type-1')
-        devicerole = DeviceRole.objects.create(name='Device Role 1', slug='device-role-1')
+        role = DeviceRole.objects.create(name='Device Role 1', slug='device-role-1')
         region = Region.objects.create(name='Region')
         sitegroup = SiteGroup.objects.create(name='Site Group')
         site = Site.objects.create(name='Site 1', slug='site-1', region=region, group=sitegroup)
@@ -40,7 +58,7 @@ class ConfigContextTest(TestCase):
         Device.objects.create(
             name='Device 1',
             device_type=devicetype,
-            device_role=devicerole,
+            role=role,
             site=site,
             location=location
         )
@@ -234,7 +252,7 @@ class ConfigContextTest(TestCase):
             location=location,
             tenant=tenant,
             platform=platform,
-            device_role=DeviceRole.objects.first(),
+            role=DeviceRole.objects.first(),
             device_type=DeviceType.objects.first()
         )
         device.tags.add(tag)
@@ -252,7 +270,12 @@ class ConfigContextTest(TestCase):
         tag = Tag.objects.first()
         cluster_type = ClusterType.objects.create(name="Cluster Type")
         cluster_group = ClusterGroup.objects.create(name="Cluster Group")
-        cluster = Cluster.objects.create(name="Cluster", group=cluster_group, type=cluster_type)
+        cluster = Cluster.objects.create(
+            name="Cluster",
+            group=cluster_group,
+            type=cluster_type,
+            site=site,
+        )
 
         region_context = ConfigContext.objects.create(
             name="region",
@@ -336,6 +359,41 @@ class ConfigContextTest(TestCase):
         annotated_queryset = VirtualMachine.objects.filter(name=virtual_machine.name).annotate_config_context_data()
         self.assertEqual(virtual_machine.get_config_context(), annotated_queryset[0].get_config_context())
 
+    def test_virtualmachine_site_context(self):
+        """
+        Check that config context associated with a site applies to a VM whether the VM is assigned
+        directly to that site or via its cluster.
+        """
+        site = Site.objects.first()
+        cluster_type = ClusterType.objects.create(name="Cluster Type")
+        cluster = Cluster.objects.create(name="Cluster", type=cluster_type, site=site)
+        vm_role = DeviceRole.objects.first()
+
+        # Create a ConfigContext associated with the site
+        context = ConfigContext.objects.create(
+            name="context1",
+            weight=100,
+            data={"foo": True}
+        )
+        context.sites.add(site)
+
+        # Create one VM assigned directly to the site, and one assigned via the cluster
+        vm1 = VirtualMachine.objects.create(name="VM 1", site=site, role=vm_role)
+        vm2 = VirtualMachine.objects.create(name="VM 2", cluster=cluster, role=vm_role)
+
+        # Check that their individually-rendered config contexts are identical
+        self.assertEqual(
+            vm1.get_config_context(),
+            vm2.get_config_context()
+        )
+
+        # Check that their annotated config contexts are identical
+        vms = VirtualMachine.objects.filter(pk__in=(vm1.pk, vm2.pk)).annotate_config_context_data()
+        self.assertEqual(
+            vms[0].get_config_context(),
+            vms[1].get_config_context()
+        )
+
     def test_multiple_tags_return_distinct_objects(self):
         """
         Tagged items use a generic relationship, which results in duplicate rows being returned when queried.
@@ -364,7 +422,7 @@ class ConfigContextTest(TestCase):
             site=site,
             tenant=tenant,
             platform=platform,
-            device_role=DeviceRole.objects.first(),
+            role=DeviceRole.objects.first(),
             device_type=DeviceType.objects.first()
         )
         device.tags.set(tags)
@@ -412,7 +470,7 @@ class ConfigContextTest(TestCase):
             site=site,
             tenant=tenant,
             platform=platform,
-            device_role=DeviceRole.objects.first(),
+            role=DeviceRole.objects.first(),
             device_type=DeviceType.objects.first()
         )
         device.tags.set([tag1, tag2])

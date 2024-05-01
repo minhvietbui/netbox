@@ -6,7 +6,6 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.generics import RetrieveUpdateDestroyAPIView
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.routers import APIRootView
@@ -39,6 +38,17 @@ class ExtrasRootView(APIRootView):
 
 
 #
+# EventRules
+#
+
+class EventRuleViewSet(NetBoxModelViewSet):
+    metadata_class = ContentTypeMetadata
+    queryset = EventRule.objects.all()
+    serializer_class = serializers.EventRuleSerializer
+    filterset_class = filtersets.EventRuleFilterSet
+
+
+#
 # Webhooks
 #
 
@@ -55,9 +65,38 @@ class WebhookViewSet(NetBoxModelViewSet):
 
 class CustomFieldViewSet(NetBoxModelViewSet):
     metadata_class = ContentTypeMetadata
-    queryset = CustomField.objects.all()
+    queryset = CustomField.objects.select_related('choice_set')
     serializer_class = serializers.CustomFieldSerializer
     filterset_class = filtersets.CustomFieldFilterSet
+
+
+class CustomFieldChoiceSetViewSet(NetBoxModelViewSet):
+    queryset = CustomFieldChoiceSet.objects.all()
+    serializer_class = serializers.CustomFieldChoiceSetSerializer
+    filterset_class = filtersets.CustomFieldChoiceSetFilterSet
+
+    @action(detail=True)
+    def choices(self, request, pk):
+        """
+        Provides an endpoint to iterate through each choice in a set.
+        """
+        choiceset = get_object_or_404(self.queryset, pk=pk)
+        choices = choiceset.choices
+
+        # Enable filtering
+        if q := request.GET.get('q'):
+            q = q.lower()
+            choices = [c for c in choices if q in c[0].lower() or q in c[1].lower()]
+
+        # Paginate data
+        if page := self.paginate_queryset(choices):
+            data = [
+                {'id': c[0], 'display': c[1]} for c in page
+            ]
+        else:
+            data = []
+
+        return self.get_paginated_response(data)
 
 
 #
@@ -91,6 +130,17 @@ class SavedFilterViewSet(NetBoxModelViewSet):
     queryset = SavedFilter.objects.all()
     serializer_class = serializers.SavedFilterSerializer
     filterset_class = filtersets.SavedFilterFilterSet
+
+
+#
+# Bookmarks
+#
+
+class BookmarkViewSet(NetBoxModelViewSet):
+    metadata_class = ContentTypeMetadata
+    queryset = Bookmark.objects.all()
+    serializer_class = serializers.BookmarkSerializer
+    filterset_class = filtersets.BookmarkFilterSet
 
 
 #
@@ -187,11 +237,10 @@ class ReportViewSet(ViewSet):
         """
         Compile all reports and their related results (if any). Result data is deferred in the list view.
         """
-        report_content_type = ContentType.objects.get(app_label='extras', model='report')
         results = {
-            r.name: r
-            for r in Job.objects.filter(
-                object_type=report_content_type,
+            job.name: job
+            for job in Job.objects.filter(
+                object_type=ContentType.objects.get(app_label='extras', model='reportmodule'),
                 status__in=JobStatusChoices.TERMINAL_STATE_CHOICES
             ).order_by('name', '-created').distinct('name').defer('data')
         }
@@ -202,13 +251,13 @@ class ReportViewSet(ViewSet):
 
         # Attach Job objects to each report (if any)
         for report in report_list:
-            report.result = results.get(report.full_name, None)
+            report.result = results.get(report.name, None)
 
         serializer = serializers.ReportSerializer(report_list, many=True, context={
             'request': request,
         })
 
-        return Response(serializer.data)
+        return Response({'count': len(report_list), 'results': serializer.data})
 
     def retrieve(self, request, pk):
         """
@@ -245,7 +294,7 @@ class ReportViewSet(ViewSet):
 
         # Retrieve and run the Report. This will create a new Job.
         module, report_cls = self._get_report(pk)
-        report = report_cls()
+        report = report_cls
         input_serializer = serializers.ReportInputSerializer(
             data=request.data,
             context={'report': report}
@@ -290,12 +339,10 @@ class ScriptViewSet(ViewSet):
         return module, script
 
     def list(self, request):
-
-        script_content_type = ContentType.objects.get(app_label='extras', model='script')
         results = {
-            r.name: r
-            for r in Job.objects.filter(
-                object_type=script_content_type,
+            job.name: job
+            for job in Job.objects.filter(
+                object_type=ContentType.objects.get(app_label='extras', model='scriptmodule'),
                 status__in=JobStatusChoices.TERMINAL_STATE_CHOICES
             ).order_by('name', '-created').distinct('name').defer('data')
         }
@@ -306,18 +353,18 @@ class ScriptViewSet(ViewSet):
 
         # Attach Job objects to each script (if any)
         for script in script_list:
-            script.result = results.get(script.full_name, None)
+            script.result = results.get(script.class_name, None)
 
         serializer = serializers.ScriptSerializer(script_list, many=True, context={'request': request})
 
-        return Response(serializer.data)
+        return Response({'count': len(script_list), 'results': serializer.data})
 
     def retrieve(self, request, pk):
         module, script = self._get_script(pk)
         object_type = ContentType.objects.get(app_label='extras', model='scriptmodule')
         script.result = Job.objects.filter(
             object_type=object_type,
-            name=script.name,
+            name=script.class_name,
             status__in=JobStatusChoices.TERMINAL_STATE_CHOICES
         ).first()
         serializer = serializers.ScriptDetailSerializer(script, context={'request': request})
@@ -371,7 +418,7 @@ class ObjectChangeViewSet(ReadOnlyModelViewSet):
     Retrieve a list of recent changes.
     """
     metadata_class = ContentTypeMetadata
-    queryset = ObjectChange.objects.prefetch_related('user')
+    queryset = ObjectChange.objects.valid_models().prefetch_related('user')
     serializer_class = serializers.ObjectChangeSerializer
     filterset_class = filtersets.ObjectChangeFilterSet
 
@@ -384,7 +431,7 @@ class ContentTypeViewSet(ReadOnlyModelViewSet):
     """
     Read-only list of ContentTypes. Limit results to ContentTypes pertinent to NetBox objects.
     """
-    permission_classes = (IsAuthenticated,)
+    permission_classes = [IsAuthenticatedOrLoginNotRequired]
     queryset = ContentType.objects.order_by('app_label', 'model')
     serializer_class = serializers.ContentTypeSerializer
     filterset_class = filtersets.ContentTypeFilterSet

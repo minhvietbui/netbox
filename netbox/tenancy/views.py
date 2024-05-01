@@ -2,21 +2,44 @@ from django.contrib.contenttypes.models import ContentType
 from django.shortcuts import get_object_or_404
 from django.utils.translation import gettext as _
 
-from circuits.models import Circuit
-from dcim.models import Cable, Device, Location, Rack, RackReservation, Site, VirtualDeviceContext
-from ipam.models import Aggregate, ASN, IPAddress, IPRange, L2VPN, Prefix, VLAN, VRF
 from netbox.views import generic
-from utilities.utils import count_related
-from utilities.views import register_model_view
-from virtualization.models import VirtualMachine, Cluster
-from wireless.models import WirelessLAN, WirelessLink
+from utilities.utils import count_related, get_related_models
+from utilities.views import register_model_view, ViewTab
 from . import filtersets, forms, tables
 from .models import *
 
 
+class ObjectContactsView(generic.ObjectChildrenView):
+    child_model = ContactAssignment
+    table = tables.ContactAssignmentTable
+    filterset = filtersets.ContactAssignmentFilterSet
+    template_name = 'tenancy/object_contacts.html'
+    tab = ViewTab(
+        label=_('Contacts'),
+        badge=lambda obj: obj.contacts.count(),
+        permission='tenancy.view_contactassignment',
+        weight=5000
+    )
+
+    def get_children(self, request, parent):
+        return ContactAssignment.objects.restrict(request.user, 'view').filter(
+            content_type=ContentType.objects.get_for_model(parent),
+            object_id=parent.pk
+        ).order_by('priority', 'contact', 'role')
+
+    def get_table(self, *args, **kwargs):
+        table = super().get_table(*args, **kwargs)
+
+        # Hide object columns
+        table.columns.hide('content_type')
+        table.columns.hide('object')
+
+        return table
+
 #
 # Tenant groups
 #
+
 
 class TenantGroupListView(generic.ObjectListView):
     queryset = TenantGroup.objects.add_related_count(
@@ -104,31 +127,8 @@ class TenantView(generic.ObjectView):
 
     def get_extra_context(self, request, instance):
         related_models = [
-            # DCIM
-            (Site.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Rack.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (RackReservation.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Location.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Device.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (VirtualDeviceContext.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Cable.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            # IPAM
-            (VRF.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Aggregate.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Prefix.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (IPRange.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (IPAddress.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (ASN.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (VLAN.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (L2VPN.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            # Circuits
-            (Circuit.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            # Virtualization
-            (VirtualMachine.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Cluster.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            # Wireless
-            (WirelessLAN.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (WirelessLink.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
+            (model.objects.restrict(request.user, 'view').filter(tenant=instance), f'{field}_id')
+            for model, field in get_related_models(Tenant)
         ]
 
         return {
@@ -163,6 +163,11 @@ class TenantBulkDeleteView(generic.BulkDeleteView):
     queryset = Tenant.objects.all()
     filterset = filtersets.TenantFilterSet
     table = tables.TenantTable
+
+
+@register_model_view(Tenant, 'contacts')
+class TenantContactsView(ObjectContactsView):
+    queryset = Tenant.objects.all()
 
 
 #
@@ -342,17 +347,22 @@ class ContactBulkDeleteView(generic.BulkDeleteView):
     filterset = filtersets.ContactFilterSet
     table = tables.ContactTable
 
-
 #
 # Contact assignments
 #
+
 
 class ContactAssignmentListView(generic.ObjectListView):
     queryset = ContactAssignment.objects.all()
     filterset = filtersets.ContactAssignmentFilterSet
     filterset_form = forms.ContactAssignmentFilterForm
     table = tables.ContactAssignmentTable
-    actions = ('export', 'bulk_edit', 'bulk_delete')
+    actions = {
+        'import': {'add'},
+        'export': {'view'},
+        'bulk_edit': {'change'},
+        'bulk_delete': {'delete'},
+    }
 
 
 @register_model_view(ContactAssignment, 'edit')
@@ -380,6 +390,11 @@ class ContactAssignmentBulkEditView(generic.BulkEditView):
     filterset = filtersets.ContactAssignmentFilterSet
     table = tables.ContactAssignmentTable
     form = forms.ContactAssignmentBulkEditForm
+
+
+class ContactAssignmentBulkImportView(generic.BulkImportView):
+    queryset = ContactAssignment.objects.all()
+    model_form = forms.ContactAssignmentImportForm
 
 
 class ContactAssignmentBulkDeleteView(generic.BulkDeleteView):

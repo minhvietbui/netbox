@@ -7,21 +7,22 @@ import feedparser
 import requests
 from django import forms
 from django.conf import settings
-from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache
-from django.db.models import Q
 from django.template.loader import render_to_string
-from django.urls import NoReverseMatch, reverse
+from django.urls import NoReverseMatch, resolve, reverse
 from django.utils.translation import gettext as _
 
-from extras.utils import FeatureQuery
+from core.models import ContentType
+from extras.choices import BookmarkOrderingChoices
+from utilities.choices import ButtonColorChoices
 from utilities.forms import BootstrapMixin
 from utilities.permissions import get_permission_for_model
 from utilities.templatetags.builtins.filters import render_markdown
-from utilities.utils import content_type_identifier, content_type_name, get_viewname
+from utilities.utils import content_type_identifier, content_type_name, dict_to_querydict, get_viewname
 from .utils import register_widget
 
 __all__ = (
+    'BookmarksWidget',
     'DashboardWidget',
     'NoteWidget',
     'ObjectCountsWidget',
@@ -31,12 +32,17 @@ __all__ = (
 )
 
 
-def get_content_type_labels():
+def get_object_type_choices():
     return [
         (content_type_identifier(ct), content_type_name(ct))
-        for ct in ContentType.objects.filter(
-            FeatureQuery('export_templates').get_query() | Q(app_label='extras', model='objectchange')
-        ).order_by('app_label', 'model')
+        for ct in ContentType.objects.public().order_by('app_label', 'model')
+    ]
+
+
+def get_bookmarks_object_type_choices():
+    return [
+        (content_type_identifier(ct), content_type_name(ct))
+        for ct in ContentType.objects.with_feature('bookmarks').order_by('app_label', 'model')
     ]
 
 
@@ -106,11 +112,29 @@ class DashboardWidget:
         Params:
             request: The current request
         """
-        raise NotImplementedError(f"{self.__class__} must define a render() method.")
+        raise NotImplementedError(_("{class_name} must define a render() method.").format(
+            class_name=self.__class__
+        ))
 
     @property
     def name(self):
         return f'{self.__class__.__module__.split(".")[0]}.{self.__class__.__name__}'
+
+    @property
+    def fg_color(self):
+        """
+        Return the appropriate foreground (text) color for the widget's color.
+        """
+        if self.color in (
+            ButtonColorChoices.CYAN,
+            ButtonColorChoices.GRAY,
+            ButtonColorChoices.GREY,
+            ButtonColorChoices.TEAL,
+            ButtonColorChoices.WHITE,
+            ButtonColorChoices.YELLOW,
+        ):
+            return ButtonColorChoices.BLACK
+        return ButtonColorChoices.WHITE
 
     @property
     def form_data(self):
@@ -143,12 +167,12 @@ class ObjectCountsWidget(DashboardWidget):
 
     class ConfigForm(WidgetConfigForm):
         models = forms.MultipleChoiceField(
-            choices=get_content_type_labels
+            choices=get_object_type_choices
         )
         filters = forms.JSONField(
             required=False,
             label='Object filters',
-            help_text=_("Only objects matching the specified filters will be counted")
+            help_text=_("Filters to apply when counting the number of objects")
         )
 
         def clean_filters(self):
@@ -156,14 +180,7 @@ class ObjectCountsWidget(DashboardWidget):
                 try:
                     dict(data)
                 except TypeError:
-                    raise forms.ValidationError("Invalid format. Object filters must be passed as a dictionary.")
-                for model in get_models_from_content_types(self.cleaned_data.get('models')):
-                    try:
-                        # Validate the filters by creating a QuerySet
-                        model.objects.filter(**data).none()
-                    except Exception:
-                        model_name = model._meta.verbose_name_plural
-                        raise forms.ValidationError(f"Invalid filter specification for {model_name}.")
+                    raise forms.ValidationError(_("Invalid format. Object filters must be passed as a dictionary."))
             return data
 
     def render(self, request):
@@ -171,13 +188,18 @@ class ObjectCountsWidget(DashboardWidget):
         for model in get_models_from_content_types(self.config['models']):
             permission = get_permission_for_model(model, 'view')
             if request.user.has_perm(permission):
+                url = reverse(get_viewname(model, 'list'))
                 qs = model.objects.restrict(request.user, 'view')
+                # Apply any specified filters
                 if filters := self.config.get('filters'):
-                    qs = qs.filter(**filters)
+                    params = dict_to_querydict(filters)
+                    filterset = getattr(resolve(url).func.view_class, 'filterset', None)
+                    qs = filterset(params, qs).qs
+                    url = f'{url}?{params.urlencode()}'
                 object_count = qs.count
-                counts.append((model, object_count))
+                counts.append((model, object_count, url))
             else:
-                counts.append((model, None))
+                counts.append((model, None, None))
 
         return render_to_string(self.template_name, {
             'counts': counts,
@@ -194,7 +216,7 @@ class ObjectListWidget(DashboardWidget):
 
     class ConfigForm(WidgetConfigForm):
         model = forms.ChoiceField(
-            choices=get_content_type_labels
+            choices=get_object_type_choices
         )
         page_size = forms.IntegerField(
             required=False,
@@ -212,7 +234,7 @@ class ObjectListWidget(DashboardWidget):
                 try:
                     urlencode(data)
                 except (TypeError, ValueError):
-                    raise forms.ValidationError("Invalid format. URL parameters must be passed as a dictionary.")
+                    raise forms.ValidationError(_("Invalid format. URL parameters must be passed as a dictionary."))
             return data
 
     def render(self, request):
@@ -317,3 +339,44 @@ class RSSFeedWidget(DashboardWidget):
         return {
             'feed': feed,
         }
+
+
+@register_widget
+class BookmarksWidget(DashboardWidget):
+    default_title = _('Bookmarks')
+    default_config = {
+        'order_by': BookmarkOrderingChoices.ORDERING_NEWEST,
+    }
+    description = _('Show your personal bookmarks')
+    template_name = 'extras/dashboard/widgets/bookmarks.html'
+
+    class ConfigForm(WidgetConfigForm):
+        object_types = forms.MultipleChoiceField(
+            choices=get_bookmarks_object_type_choices,
+            required=False
+        )
+        order_by = forms.ChoiceField(
+            choices=BookmarkOrderingChoices
+        )
+        max_items = forms.IntegerField(
+            min_value=1,
+            required=False
+        )
+
+    def render(self, request):
+        from extras.models import Bookmark
+
+        if request.user.is_anonymous:
+            bookmarks = list()
+        else:
+            bookmarks = Bookmark.objects.filter(user=request.user).order_by(self.config['order_by'])
+            if object_types := self.config.get('object_types'):
+                models = get_models_from_content_types(object_types)
+                conent_types = ContentType.objects.get_for_models(*models).values()
+                bookmarks = bookmarks.filter(object_type__in=conent_types)
+            if max_items := self.config.get('max_items'):
+                bookmarks = bookmarks[:max_items]
+
+        return render_to_string(self.template_name, {
+            'bookmarks': bookmarks,
+        })

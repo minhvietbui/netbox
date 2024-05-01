@@ -1,7 +1,5 @@
 # Dashboard Widgets
 
-!!! info "This feature was introduced in NetBox v3.5."
-
 Each NetBox user can customize his or her personal dashboard by adding and removing widgets and by manipulating the size and position of each. Plugins can register their own dashboard widgets to complement those already available natively.
 
 ## The DashboardWidget Class
@@ -48,4 +46,15 @@ class ReminderWidget(DashboardWidget):
 
     def render(self, request):
         return self.config.get('content')
+```
+
+## Initialization
+
+To register the widget, it becomes essential to import the widget module. The recommended approach is to accomplish this within the `ready` method situated in your `PluginConfig`:
+
+```python
+class FooBarConfig(PluginConfig):
+    def ready(self):
+        super().ready()
+        from . import widgets  # point this to the above widget module you created
 ```

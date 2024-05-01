@@ -43,9 +43,21 @@ Follow these instructions to perform a new installation of NetBox in a temporary
 
 Submit a pull request to merge the `feature` branch into the `develop` branch in preparation for its release. Once it has been merged, continue with the section for patch releases below.
 
+### Rebuild Demo Data (After Release)
+
+After the release of a new minor version, generate a new demo data snapshot compatible with the new release. See the [`netbox-demo-data`](https://github.com/netbox-community/netbox-demo-data) repository for instructions.
+
 ---
 
 ## Patch Releases
+
+### Notify netbox-docker Project of Any Relevant Changes
+
+Notify the [`netbox-docker`](https://github.com/netbox-community/netbox-docker) maintainers (in **#netbox-docker**) of any changes that may be relevant to their build process, including:
+
+* Significant changes to `upgrade.sh`
+* Increases in minimum versions for service dependencies (PostgreSQL, Redis, etc.)
+* Any changes to the reference installation
 
 ### Update Requirements
 
@@ -58,6 +70,28 @@ Before each release, update each of NetBox's Python dependencies to its most rec
 
 In cases where upgrading a dependency to its most recent release is breaking, it should be constrained to its current minor version in `base_requirements.txt` with an explanatory comment and revisited for the next major NetBox release (see the [Address Constrained Dependencies](#address-constrained-dependencies) section above).
 
+### Rebuild the Device Type Definition Schema
+
+Run the following command to update the device type definition validation schema:
+
+```nohighlight
+./manage.py buildschema --write
+```
+
+This will automatically update the schema file at `contrib/generated_schema.json`.
+
+### Update & Compile Translations
+
+Log into [Transifex](https://app.transifex.com/netbox-community/netbox/dashboard/) to download the updated string maps. Download the resource (portable object, or `.po`) file for each language and save them to `netbox/translations/$lang/LC_MESSAGES/django.po`, overwriting the current files. (Be sure to click the **Download for use** link.)
+
+![Transifex download](../media/development/transifex_download.png)
+
+Once the resource files for all languages have been updated, compile the machine object (`.mo`) files using the `compilemessages` management command:
+
+```nohighlight
+./manage.py compilemessages
+```
+
 ### Update Version and Changelog
 
 * Update the `VERSION` constant in `settings.py` to the new release version.
@@ -68,7 +102,7 @@ Commit these changes to the `develop` branch and push upstream.
 
 ### Verify CI Build Status
 
-Ensure that continuous integration testing on the `develop` branch is completing successfully. If it fails, take action to correct the failure before proceding with the release.
+Ensure that continuous integration testing on the `develop` branch is completing successfully. If it fails, take action to correct the failure before proceeding with the release.
 
 ### Submit a Pull Request
 

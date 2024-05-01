@@ -1,15 +1,14 @@
 from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
-from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.urls import reverse
-from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy as _
 
 from dcim.models import Interface
 from ipam.choices import *
 from ipam.constants import *
-from ipam.querysets import VLANQuerySet
+from ipam.querysets import VLANQuerySet, VLANGroupQuerySet
 from netbox.models import OrganizationalModel, PrimaryModel
 from virtualization.models import VMInterface
 
@@ -24,13 +23,15 @@ class VLANGroup(OrganizationalModel):
     A VLAN group is an arbitrary collection of VLANs within which VLAN IDs and names must be unique.
     """
     name = models.CharField(
+        verbose_name=_('name'),
         max_length=100
     )
     slug = models.SlugField(
+        verbose_name=_('slug'),
         max_length=100
     )
     scope_type = models.ForeignKey(
-        to=ContentType,
+        to='contenttypes.ContentType',
         on_delete=models.CASCADE,
         limit_choices_to=Q(model__in=VLANGROUP_SCOPE_TYPES),
         blank=True,
@@ -45,7 +46,7 @@ class VLANGroup(OrganizationalModel):
         fk_field='scope_id'
     )
     min_vid = models.PositiveSmallIntegerField(
-        verbose_name='Minimum VLAN ID',
+        verbose_name=_('minimum VLAN ID'),
         default=VLAN_VID_MIN,
         validators=(
             MinValueValidator(VLAN_VID_MIN),
@@ -54,7 +55,7 @@ class VLANGroup(OrganizationalModel):
         help_text=_('Lowest permissible ID of a child VLAN')
     )
     max_vid = models.PositiveSmallIntegerField(
-        verbose_name='Maximum VLAN ID',
+        verbose_name=_('maximum VLAN ID'),
         default=VLAN_VID_MAX,
         validators=(
             MinValueValidator(VLAN_VID_MIN),
@@ -63,8 +64,13 @@ class VLANGroup(OrganizationalModel):
         help_text=_('Highest permissible ID of a child VLAN')
     )
 
+    objects = VLANGroupQuerySet.as_manager()
+
     class Meta:
         ordering = ('name', 'pk')  # Name may be non-unique
+        indexes = (
+            models.Index(fields=('scope_type', 'scope_id')),
+        )
         constraints = (
             models.UniqueConstraint(
                 fields=('scope_type', 'scope_id', 'name'),
@@ -75,8 +81,8 @@ class VLANGroup(OrganizationalModel):
                 name='%(app_label)s_%(class)s_unique_scope_slug'
             ),
         )
-        verbose_name = 'VLAN group'
-        verbose_name_plural = 'VLAN groups'
+        verbose_name = _('VLAN group')
+        verbose_name_plural = _('VLAN groups')
 
     def get_absolute_url(self):
         return reverse('ipam:vlangroup', args=[self.pk])
@@ -86,14 +92,14 @@ class VLANGroup(OrganizationalModel):
 
         # Validate scope assignment
         if self.scope_type and not self.scope_id:
-            raise ValidationError("Cannot set scope_type without scope_id.")
+            raise ValidationError(_("Cannot set scope_type without scope_id."))
         if self.scope_id and not self.scope_type:
-            raise ValidationError("Cannot set scope_id without scope_type.")
+            raise ValidationError(_("Cannot set scope_id without scope_type."))
 
         # Validate min/max child VID limits
         if self.max_vid < self.min_vid:
             raise ValidationError({
-                'max_vid': "Maximum child VID must be greater than or equal to minimum child VID"
+                'max_vid': _("Maximum child VID must be greater than or equal to minimum child VID")
             })
 
     def get_available_vids(self):
@@ -113,6 +119,12 @@ class VLANGroup(OrganizationalModel):
         if available_vids:
             return available_vids[0]
         return None
+
+    def get_child_vlans(self):
+        """
+        Return all VLANs within this group.
+        """
+        return VLAN.objects.filter(group=self).order_by('vid')
 
 
 class VLAN(PrimaryModel):
@@ -141,7 +153,7 @@ class VLAN(PrimaryModel):
         help_text=_("VLAN group (optional)")
     )
     vid = models.PositiveSmallIntegerField(
-        verbose_name='ID',
+        verbose_name=_('VLAN ID'),
         validators=(
             MinValueValidator(VLAN_VID_MIN),
             MaxValueValidator(VLAN_VID_MAX)
@@ -149,6 +161,7 @@ class VLAN(PrimaryModel):
         help_text=_("Numeric VLAN ID (1-4094)")
     )
     name = models.CharField(
+        verbose_name=_('name'),
         max_length=64
     )
     tenant = models.ForeignKey(
@@ -159,6 +172,7 @@ class VLAN(PrimaryModel):
         null=True
     )
     status = models.CharField(
+        verbose_name=_('status'),
         max_length=50,
         choices=VLANStatusChoices,
         default=VLANStatusChoices.STATUS_ACTIVE,
@@ -172,9 +186,8 @@ class VLAN(PrimaryModel):
         null=True,
         help_text=_("The primary function of this VLAN")
     )
-
     l2vpn_terminations = GenericRelation(
-        to='ipam.L2VPNTermination',
+        to='vpn.L2VPNTermination',
         content_type_field='assigned_object_type',
         object_id_field='assigned_object_id',
         related_query_name='vlan'
@@ -198,8 +211,8 @@ class VLAN(PrimaryModel):
                 name='%(app_label)s_%(class)s_unique_group_name'
             ),
         )
-        verbose_name = 'VLAN'
-        verbose_name_plural = 'VLANs'
+        verbose_name = _('VLAN')
+        verbose_name_plural = _('VLANs')
 
     def __str__(self):
         return f'{self.name} ({self.vid})'
@@ -212,16 +225,18 @@ class VLAN(PrimaryModel):
 
         # Validate VLAN group (if assigned)
         if self.group and self.site and self.group.scope != self.site:
-            raise ValidationError({
-                'group': f"VLAN is assigned to group {self.group} (scope: {self.group.scope}); cannot also assign to "
-                         f"site {self.site}."
-            })
+            raise ValidationError(
+                _(
+                    "VLAN is assigned to group {group} (scope: {scope}); cannot also assign to site {site}."
+                ).format(group=self.group, scope=self.group.scope, site=self.site)
+            )
 
         # Validate group min/max VIDs
         if self.group and not self.group.min_vid <= self.vid <= self.group.max_vid:
             raise ValidationError({
-                'vid': f"VID must be between {self.group.min_vid} and {self.group.max_vid} for VLANs in group "
-                       f"{self.group}"
+                'vid': _(
+                    "VID must be between {minimum} and {maximum} for VLANs in group {group}"
+                ).format(minimum=self.group.min_vid, maximum=self.group.max_vid, group=self.group)
             })
 
     def get_status_color(self):

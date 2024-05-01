@@ -100,6 +100,8 @@ Create a system user account named `netbox`. We'll configure the WSGI and HTTP s
     ```
     sudo adduser --system --group netbox
     sudo chown --recursive netbox /opt/netbox/netbox/media/
+    sudo chown --recursive netbox /opt/netbox/netbox/reports/
+    sudo chown --recursive netbox /opt/netbox/netbox/scripts/
     ```
 
 === "CentOS"
@@ -108,6 +110,8 @@ Create a system user account named `netbox`. We'll configure the WSGI and HTTP s
     sudo groupadd --system netbox
     sudo adduser --system -g netbox netbox
     sudo chown --recursive netbox /opt/netbox/netbox/media/
+    sudo chown --recursive netbox /opt/netbox/netbox/reports/
+    sudo chown --recursive netbox /opt/netbox/netbox/scripts/
     ```
 
 ## Configuration
@@ -206,6 +210,33 @@ By default, NetBox will use the local filesystem to store uploaded files. To use
 ```no-highlight
 sudo sh -c "echo 'django-storages' >> /opt/netbox/local_requirements.txt"
 ```
+
+### Remote Data Sources
+
+NetBox supports integration with several remote data sources via configurable backends. Each of these requires the installation of one or more additional libraries.
+
+* Amazon S3: [`boto3`](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html)
+* Git: [`dulwich`](https://www.dulwich.io/)
+
+For example, to enable the Amazon S3 backend, add `boto3` to your local requirements file:
+
+```no-highlight
+sudo sh -c "echo 'boto3' >> /opt/netbox/local_requirements.txt"
+```
+
+!!! info
+    These packages were previously required in NetBox v3.5 but now are optional.
+
+### Sentry Integration
+
+NetBox may be configured to send error reports to [Sentry](../administration/error-reporting.md) for analysis. This integration requires installation of the `sentry-sdk` Python library.
+
+```no-highlight
+sudo sh -c "echo 'sentry-sdk' >> /opt/netbox/local_requirements.txt"
+```
+
+!!! info
+    Sentry integration was previously included by default in NetBox v3.6 but is now optional.
 
 ## Run the Upgrade Script
 

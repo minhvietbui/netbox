@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import django_tables2 as tables
 from django.contrib.auth.models import AnonymousUser
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -7,14 +9,16 @@ from django.db.models.fields.related import RelatedField
 from django.urls import reverse
 from django.urls.exceptions import NoReverseMatch
 from django.utils.safestring import mark_safe
-from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy as _
 from django_tables2.data import TableQuerysetData
 
+from extras.choices import *
 from extras.models import CustomField, CustomLink
-from extras.choices import CustomFieldVisibilityChoices
+from netbox.registry import registry
 from netbox.tables import columns
 from utilities.paginator import EnhancedPaginator, get_paginate_count
 from utilities.utils import get_viewname, highlight_string, title
+from .template_code import *
 
 __all__ = (
     'BaseTable',
@@ -54,7 +58,7 @@ class BaseTable(tables.Table):
         #   3. Meta.fields
         selected_columns = None
         if user is not None and not isinstance(user, AnonymousUser):
-            selected_columns = user.config.get(f"tables.{self.__class__.__name__}.columns")
+            selected_columns = user.config.get(f"tables.{self.name}.columns")
         if not selected_columns:
             selected_columns = getattr(self.Meta, 'default_columns', self.Meta.fields)
 
@@ -114,8 +118,12 @@ class BaseTable(tables.Table):
         return columns
 
     @property
+    def name(self):
+        return self.__class__.__name__
+
+    @property
     def available_columns(self):
-        return self._get_columns(visible=False)
+        return sorted(self._get_columns(visible=False))
 
     @property
     def selected_columns(self):
@@ -138,13 +146,16 @@ class BaseTable(tables.Table):
         """
         # Save ordering preference
         if request.user.is_authenticated:
-            table_name = self.__class__.__name__
             if self.prefixed_order_by_field in request.GET:
-                # If an ordering has been specified as a query parameter, save it as the
-                # user's preferred ordering for this table.
-                ordering = request.GET.getlist(self.prefixed_order_by_field)
-                request.user.config.set(f'tables.{table_name}.ordering', ordering, commit=True)
-            elif ordering := request.user.config.get(f'tables.{table_name}.ordering'):
+                if request.GET[self.prefixed_order_by_field]:
+                    # If an ordering has been specified as a query parameter, save it as the
+                    # user's preferred ordering for this table.
+                    ordering = request.GET.getlist(self.prefixed_order_by_field)
+                    request.user.config.set(f'tables.{self.name}.ordering', ordering, commit=True)
+                else:
+                    # If the ordering has been set to none (empty), clear any existing preference.
+                    request.user.config.clear(f'tables.{self.name}.ordering', commit=True)
+            elif ordering := request.user.config.get(f'tables.{self.name}.ordering'):
                 # If no ordering has been specified, set the preferred ordering (if any).
                 self.order_by = ordering
 
@@ -170,7 +181,7 @@ class NetBoxTable(BaseTable):
     )
     id = tables.Column(
         linkify=True,
-        verbose_name='ID'
+        verbose_name=_('ID')
     )
     actions = columns.ActionsColumn()
 
@@ -183,12 +194,17 @@ class NetBoxTable(BaseTable):
         if extra_columns is None:
             extra_columns = []
 
+        if registered_columns := registry['tables'].get(self.__class__):
+            extra_columns.extend([
+                # Create a copy to avoid modifying the original Column
+                (name, deepcopy(column)) for name, column in registered_columns.items()
+            ])
+
         # Add custom field & custom link columns
         content_type = ContentType.objects.get_for_model(self._meta.model)
         custom_fields = CustomField.objects.filter(
             content_types=content_type
-        ).exclude(ui_visibility=CustomFieldVisibilityChoices.VISIBILITY_HIDDEN)
-
+        ).exclude(ui_visible=CustomFieldUIVisibleChoices.HIDDEN)
         extra_columns.extend([
             (f'cf_{cf.name}', columns.CustomFieldColumn(cf)) for cf in custom_fields
         ])
@@ -219,11 +235,20 @@ class SearchTable(tables.Table):
         order_by="object___meta__verbose_name",
     )
     object = tables.Column(
+        verbose_name=_('Object'),
         linkify=True,
         order_by=('name', )
     )
-    field = tables.Column()
-    value = tables.Column()
+    field = tables.Column(
+        verbose_name=_('Field'),
+    )
+    value = tables.Column(
+        verbose_name=_('Value'),
+    )
+    attrs = columns.TemplateColumn(
+        template_code=SEARCH_RESULT_ATTRS,
+        verbose_name=_('Attributes')
+    )
 
     trim_length = 30
 

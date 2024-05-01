@@ -6,7 +6,6 @@ from urllib.parse import urlparse
 
 from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
-from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
@@ -15,6 +14,7 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 from django.utils.translation import gettext as _
 
+from netbox.constants import CENSOR_TOKEN, CENSOR_TOKEN_CHANGED
 from netbox.models import PrimaryModel
 from netbox.models.features import JobsMixin
 from netbox.registry import registry
@@ -39,36 +39,41 @@ class DataSource(JobsMixin, PrimaryModel):
     A remote source, such as a git repository, from which DataFiles are synchronized.
     """
     name = models.CharField(
+        verbose_name=_('name'),
         max_length=100,
         unique=True
     )
     type = models.CharField(
-        max_length=50,
-        choices=DataSourceTypeChoices,
-        default=DataSourceTypeChoices.LOCAL
+        verbose_name=_('type'),
+        max_length=50
     )
     source_url = models.CharField(
         max_length=200,
         verbose_name=_('URL')
     )
     status = models.CharField(
+        verbose_name=_('status'),
         max_length=50,
         choices=DataSourceStatusChoices,
         default=DataSourceStatusChoices.NEW,
         editable=False
     )
     enabled = models.BooleanField(
+        verbose_name=_('enabled'),
         default=True
     )
     ignore_rules = models.TextField(
+        verbose_name=_('ignore rules'),
         blank=True,
         help_text=_("Patterns (one per line) matching files to ignore when syncing")
     )
     parameters = models.JSONField(
+        verbose_name=_('parameters'),
         blank=True,
         null=True
     )
     last_synced = models.DateTimeField(
+        verbose_name=_('last synced'),
         blank=True,
         null=True,
         editable=False
@@ -76,6 +81,8 @@ class DataSource(JobsMixin, PrimaryModel):
 
     class Meta:
         ordering = ('name',)
+        verbose_name = _('data source')
+        verbose_name_plural = _('data sources')
 
     def __str__(self):
         return f'{self.name}'
@@ -87,8 +94,9 @@ class DataSource(JobsMixin, PrimaryModel):
     def docs_url(self):
         return f'{settings.STATIC_URL}docs/models/{self._meta.app_label}/{self._meta.model_name}/'
 
-    def get_type_color(self):
-        return DataSourceTypeChoices.colors.get(self.type)
+    def get_type_display(self):
+        if backend := registry['data_backends'].get(self.type):
+            return backend.label
 
     def get_status_color(self):
         return DataSourceStatusChoices.colors.get(self.status)
@@ -98,8 +106,8 @@ class DataSource(JobsMixin, PrimaryModel):
         return urlparse(self.source_url).scheme.lower()
 
     @property
-    def is_local(self):
-        return self.type == DataSourceTypeChoices.LOCAL
+    def backend_class(self):
+        return registry['data_backends'].get(self.type)
 
     @property
     def ready_for_sync(self):
@@ -109,12 +117,41 @@ class DataSource(JobsMixin, PrimaryModel):
         )
 
     def clean(self):
+        super().clean()
+
+        # Validate data backend type
+        if self.type and self.type not in registry['data_backends']:
+            raise ValidationError({
+                'type': _("Unknown backend type: {type}".format(type=self.type))
+            })
 
         # Ensure URL scheme matches selected type
-        if self.type == DataSourceTypeChoices.LOCAL and self.url_scheme not in ('file', ''):
+        if self.backend_class.is_local and self.url_scheme not in ('file', ''):
             raise ValidationError({
                 'source_url': f"URLs for local sources must start with file:// (or specify no scheme)"
             })
+
+    def to_objectchange(self, action):
+        objectchange = super().to_objectchange(action)
+
+        # Censor any backend parameters marked as sensitive in the serialized data
+        pre_change_params = {}
+        post_change_params = {}
+        if objectchange.prechange_data:
+            pre_change_params = objectchange.prechange_data.get('parameters') or {}  # parameters may be None
+        if objectchange.postchange_data:
+            post_change_params = objectchange.postchange_data.get('parameters') or {}
+        for param in self.backend_class.sensitive_parameters:
+            if post_change_params.get(param):
+                if post_change_params[param] != pre_change_params.get(param):
+                    # Set the "changed" token if the parameter's value has been modified
+                    post_change_params[param] = CENSOR_TOKEN_CHANGED
+                else:
+                    post_change_params[param] = CENSOR_TOKEN
+            if pre_change_params.get(param):
+                pre_change_params[param] = CENSOR_TOKEN
+
+        return objectchange
 
     def enqueue_sync_job(self, request):
         """
@@ -132,17 +169,15 @@ class DataSource(JobsMixin, PrimaryModel):
         )
 
     def get_backend(self):
-        backend_cls = registry['data_backends'].get(self.type)
         backend_params = self.parameters or {}
-
-        return backend_cls(self.source_url, **backend_params)
+        return self.backend_class(self.source_url, **backend_params)
 
     def sync(self):
         """
         Create/update/delete child DataFiles as necessary to synchronize with the remote source.
         """
         if self.status == DataSourceStatusChoices.SYNCING:
-            raise SyncError(f"Cannot initiate sync; syncing already in progress.")
+            raise SyncError(_("Cannot initiate sync; syncing already in progress."))
 
         # Emit the pre_sync signal
         pre_sync.send(sender=self.__class__, instance=self)
@@ -151,7 +186,12 @@ class DataSource(JobsMixin, PrimaryModel):
         DataSource.objects.filter(pk=self.pk).update(status=self.status)
 
         # Replicate source data locally
-        backend = self.get_backend()
+        try:
+            backend = self.get_backend()
+        except ModuleNotFoundError as e:
+            raise SyncError(
+                _("There was an error initializing the backend. A dependency needs to be installed: ") + str(e)
+            )
         with backend.fetch() as local_path:
 
             logger.debug(f'Syncing files from source root {local_path}')
@@ -200,6 +240,7 @@ class DataSource(JobsMixin, PrimaryModel):
 
         # Emit the post_sync signal
         post_sync.send(sender=self.__class__, instance=self)
+    sync.alters_data = True
 
     def _walk(self, root):
         """
@@ -238,9 +279,11 @@ class DataFile(models.Model):
     updated, or deleted only by calling DataSource.sync().
     """
     created = models.DateTimeField(
+        verbose_name=_('created'),
         auto_now_add=True
     )
     last_updated = models.DateTimeField(
+        verbose_name=_('last updated'),
         editable=False
     )
     source = models.ForeignKey(
@@ -250,20 +293,23 @@ class DataFile(models.Model):
         editable=False
     )
     path = models.CharField(
+        verbose_name=_('path'),
         max_length=1000,
         editable=False,
         help_text=_("File path relative to the data source's root")
     )
     size = models.PositiveIntegerField(
-        editable=False
+        editable=False,
+        verbose_name=_('size')
     )
     hash = models.CharField(
+        verbose_name=_('hash'),
         max_length=64,
         editable=False,
         validators=[
             RegexValidator(regex='^[0-9a-f]{64}$', message=_("Length must be 64 hexadecimal characters."))
         ],
-        help_text=_("SHA256 hash of the file data")
+        help_text=_('SHA256 hash of the file data')
     )
     data = models.BinaryField()
 
@@ -280,6 +326,8 @@ class DataFile(models.Model):
         indexes = [
             models.Index(fields=('source', 'path'), name='core_datafile_source_path'),
         ]
+        verbose_name = _('data file')
+        verbose_name_plural = _('data files')
 
     def __str__(self):
         return self.path
@@ -289,8 +337,10 @@ class DataFile(models.Model):
 
     @property
     def data_as_string(self):
+        if not self.data:
+            return None
         try:
-            return self.data.tobytes().decode('utf-8')
+            return self.data.decode('utf-8')
         except UnicodeDecodeError:
             return None
 
@@ -341,7 +391,7 @@ class AutoSyncRecord(models.Model):
         related_name='+'
     )
     object_type = models.ForeignKey(
-        to=ContentType,
+        to='contenttypes.ContentType',
         on_delete=models.CASCADE,
         related_name='+'
     )
@@ -350,6 +400,8 @@ class AutoSyncRecord(models.Model):
         ct_field='object_type',
         fk_field='object_id'
     )
+
+    _netbox_private = True
 
     class Meta:
         constraints = (
@@ -361,3 +413,5 @@ class AutoSyncRecord(models.Model):
         indexes = (
             models.Index(fields=('object_type', 'object_id')),
         )
+        verbose_name = _('auto sync record')
+        verbose_name_plural = _('auto sync records')

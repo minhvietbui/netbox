@@ -1,3 +1,5 @@
+from django.utils.translation import gettext_lazy as _
+
 from utilities.choices import ButtonColorChoices, ChoiceSet
 
 
@@ -22,19 +24,19 @@ class CustomFieldTypeChoices(ChoiceSet):
     TYPE_MULTIOBJECT = 'multiobject'
 
     CHOICES = (
-        (TYPE_TEXT, 'Text'),
-        (TYPE_LONGTEXT, 'Text (long)'),
-        (TYPE_INTEGER, 'Integer'),
-        (TYPE_DECIMAL, 'Decimal'),
-        (TYPE_BOOLEAN, 'Boolean (true/false)'),
-        (TYPE_DATE, 'Date'),
-        (TYPE_DATETIME, 'Date & time'),
-        (TYPE_URL, 'URL'),
-        (TYPE_JSON, 'JSON'),
-        (TYPE_SELECT, 'Selection'),
-        (TYPE_MULTISELECT, 'Multiple selection'),
-        (TYPE_OBJECT, 'Object'),
-        (TYPE_MULTIOBJECT, 'Multiple objects'),
+        (TYPE_TEXT, _('Text')),
+        (TYPE_LONGTEXT, _('Text (long)')),
+        (TYPE_INTEGER, _('Integer')),
+        (TYPE_DECIMAL, _('Decimal')),
+        (TYPE_BOOLEAN, _('Boolean (true/false)')),
+        (TYPE_DATE, _('Date')),
+        (TYPE_DATETIME, _('Date & time')),
+        (TYPE_URL, _('URL')),
+        (TYPE_JSON, _('JSON')),
+        (TYPE_SELECT, _('Selection')),
+        (TYPE_MULTISELECT, _('Multiple selection')),
+        (TYPE_OBJECT, _('Object')),
+        (TYPE_MULTIOBJECT, _('Multiple objects')),
     )
 
 
@@ -45,22 +47,48 @@ class CustomFieldFilterLogicChoices(ChoiceSet):
     FILTER_EXACT = 'exact'
 
     CHOICES = (
-        (FILTER_DISABLED, 'Disabled'),
-        (FILTER_LOOSE, 'Loose'),
-        (FILTER_EXACT, 'Exact'),
+        (FILTER_DISABLED, _('Disabled')),
+        (FILTER_LOOSE, _('Loose')),
+        (FILTER_EXACT, _('Exact')),
     )
 
 
-class CustomFieldVisibilityChoices(ChoiceSet):
+class CustomFieldUIVisibleChoices(ChoiceSet):
 
-    VISIBILITY_READ_WRITE = 'read-write'
-    VISIBILITY_READ_ONLY = 'read-only'
-    VISIBILITY_HIDDEN = 'hidden'
+    ALWAYS = 'always'
+    IF_SET = 'if-set'
+    HIDDEN = 'hidden'
 
     CHOICES = (
-        (VISIBILITY_READ_WRITE, 'Read/Write'),
-        (VISIBILITY_READ_ONLY, 'Read-only'),
-        (VISIBILITY_HIDDEN, 'Hidden'),
+        (ALWAYS, _('Always'), 'green'),
+        (IF_SET, _('If set'), 'yellow'),
+        (HIDDEN, _('Hidden'), 'gray'),
+    )
+
+
+class CustomFieldUIEditableChoices(ChoiceSet):
+
+    YES = 'yes'
+    NO = 'no'
+    HIDDEN = 'hidden'
+
+    CHOICES = (
+        (YES, _('Yes'), 'green'),
+        (NO, _('No'), 'red'),
+        (HIDDEN, _('Hidden'), 'gray'),
+    )
+
+
+class CustomFieldChoiceSetBaseChoices(ChoiceSet):
+
+    IATA = 'IATA'
+    ISO_3166 = 'ISO_3166'
+    UN_LOCODE = 'UN_LOCODE'
+
+    CHOICES = (
+        (IATA, 'IATA (Airport codes)'),
+        (ISO_3166, 'ISO 3166 (Country codes)'),
+        (UN_LOCODE, 'UN/LOCODE (Location codes)'),
     )
 
 
@@ -74,7 +102,22 @@ class CustomLinkButtonClassChoices(ButtonColorChoices):
 
     CHOICES = (
         *ButtonColorChoices.CHOICES,
-        (LINK, 'Link'),
+        (LINK, _('Link')),
+    )
+
+
+#
+# Bookmarks
+#
+
+class BookmarkOrderingChoices(ChoiceSet):
+
+    ORDERING_NEWEST = '-created'
+    ORDERING_OLDEST = 'created'
+
+    CHOICES = (
+        (ORDERING_NEWEST, _('Newest')),
+        (ORDERING_OLDEST, _('Oldest')),
     )
 
 #
@@ -89,14 +132,14 @@ class ObjectChangeActionChoices(ChoiceSet):
     ACTION_DELETE = 'delete'
 
     CHOICES = (
-        (ACTION_CREATE, 'Created', 'green'),
-        (ACTION_UPDATE, 'Updated', 'blue'),
-        (ACTION_DELETE, 'Deleted', 'red'),
+        (ACTION_CREATE, _('Created'), 'green'),
+        (ACTION_UPDATE, _('Updated'), 'blue'),
+        (ACTION_DELETE, _('Deleted'), 'red'),
     )
 
 
 #
-# Jounral entries
+# Journal entries
 #
 
 class JournalEntryKindChoices(ChoiceSet):
@@ -108,10 +151,10 @@ class JournalEntryKindChoices(ChoiceSet):
     KIND_DANGER = 'danger'
 
     CHOICES = [
-        (KIND_INFO, 'Info', 'cyan'),
-        (KIND_SUCCESS, 'Success', 'green'),
-        (KIND_WARNING, 'Warning', 'yellow'),
-        (KIND_DANGER, 'Danger', 'red'),
+        (KIND_INFO, _('Info'), 'cyan'),
+        (KIND_SUCCESS, _('Success'), 'green'),
+        (KIND_WARNING, _('Warning'), 'yellow'),
+        (KIND_DANGER, _('Danger'), 'red'),
     ]
 
 
@@ -128,22 +171,22 @@ class LogLevelChoices(ChoiceSet):
     LOG_FAILURE = 'failure'
 
     CHOICES = (
-        (LOG_DEFAULT, 'Default', 'gray'),
-        (LOG_SUCCESS, 'Success', 'green'),
-        (LOG_INFO, 'Info', 'cyan'),
-        (LOG_WARNING, 'Warning', 'yellow'),
-        (LOG_FAILURE, 'Failure', 'red'),
+        (LOG_DEFAULT, _('Default'), 'gray'),
+        (LOG_SUCCESS, _('Success'), 'green'),
+        (LOG_INFO, _('Info'), 'cyan'),
+        (LOG_WARNING, _('Warning'), 'yellow'),
+        (LOG_FAILURE, _('Failure'), 'red'),
     )
 
 
 class DurationChoices(ChoiceSet):
 
     CHOICES = (
-        (60, 'Hourly'),
-        (720, '12 hours'),
-        (1440, 'Daily'),
-        (10080, 'Weekly'),
-        (43200, '30 days'),
+        (60, _('Hourly')),
+        (720, _('12 hours')),
+        (1440, _('Daily')),
+        (10080, _('Weekly')),
+        (43200, _('30 days')),
     )
 
 
@@ -161,12 +204,12 @@ class JobResultStatusChoices(ChoiceSet):
     STATUS_FAILED = 'failed'
 
     CHOICES = (
-        (STATUS_PENDING, 'Pending', 'cyan'),
-        (STATUS_SCHEDULED, 'Scheduled', 'gray'),
-        (STATUS_RUNNING, 'Running', 'blue'),
-        (STATUS_COMPLETED, 'Completed', 'green'),
-        (STATUS_ERRORED, 'Errored', 'red'),
-        (STATUS_FAILED, 'Failed', 'red'),
+        (STATUS_PENDING, _('Pending'), 'cyan'),
+        (STATUS_SCHEDULED, _('Scheduled'), 'gray'),
+        (STATUS_RUNNING, _('Running'), 'blue'),
+        (STATUS_COMPLETED, _('Completed'), 'green'),
+        (STATUS_ERRORED, _('Errored'), 'red'),
+        (STATUS_FAILED, _('Failed'), 'red'),
     )
 
     TERMINAL_STATE_CHOICES = (
@@ -208,7 +251,58 @@ class ChangeActionChoices(ChoiceSet):
     ACTION_DELETE = 'delete'
 
     CHOICES = (
-        (ACTION_CREATE, 'Create'),
-        (ACTION_UPDATE, 'Update'),
-        (ACTION_DELETE, 'Delete'),
+        (ACTION_CREATE, _('Create'), 'green'),
+        (ACTION_UPDATE, _('Update'), 'blue'),
+        (ACTION_DELETE, _('Delete'), 'red'),
+    )
+
+
+#
+# Dashboard widgets
+#
+
+class DashboardWidgetColorChoices(ChoiceSet):
+    BLUE = 'blue'
+    INDIGO = 'indigo'
+    PURPLE = 'purple'
+    PINK = 'pink'
+    RED = 'red'
+    ORANGE = 'orange'
+    YELLOW = 'yellow'
+    GREEN = 'green'
+    TEAL = 'teal'
+    CYAN = 'cyan'
+    GRAY = 'gray'
+    BLACK = 'black'
+    WHITE = 'white'
+
+    CHOICES = (
+        (BLUE, _('Blue')),
+        (INDIGO, _('Indigo')),
+        (PURPLE, _('Purple')),
+        (PINK, _('Pink')),
+        (RED, _('Red')),
+        (ORANGE, _('Orange')),
+        (YELLOW, _('Yellow')),
+        (GREEN, _('Green')),
+        (TEAL, _('Teal')),
+        (CYAN, _('Cyan')),
+        (GRAY, _('Gray')),
+        (BLACK, _('Black')),
+        (WHITE, _('White')),
+    )
+
+
+#
+# Event Rules
+#
+
+class EventRuleActionChoices(ChoiceSet):
+
+    WEBHOOK = 'webhook'
+    SCRIPT = 'script'
+
+    CHOICES = (
+        (WEBHOOK, _('Webhook')),
+        (SCRIPT, _('Script')),
     )

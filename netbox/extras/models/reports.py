@@ -1,16 +1,19 @@
 import inspect
+import logging
 from functools import cached_property
 
-from django.contrib.contenttypes.fields import GenericRelation
 from django.db import models
 from django.urls import reverse
+from django.utils.translation import gettext_lazy as _
 
 from core.choices import ManagedFileRootPathChoices
 from core.models import ManagedFile
 from extras.utils import is_report
-from netbox.models.features import JobsMixin, WebhooksMixin
+from netbox.models.features import JobsMixin, EventRulesMixin
 from utilities.querysets import RestrictedQuerySet
 from .mixins import PythonModuleMixin
+
+logger = logging.getLogger('netbox.reports')
 
 __all__ = (
     'Report',
@@ -18,7 +21,7 @@ __all__ = (
 )
 
 
-class Report(WebhooksMixin, models.Model):
+class Report(EventRulesMixin, models.Model):
     """
     Dummy model used to generate permissions for reports. Does not exist in the database.
     """
@@ -40,6 +43,9 @@ class ReportModule(PythonModuleMixin, JobsMixin, ManagedFile):
 
     class Meta:
         proxy = True
+        ordering = ('file_root', 'file_path')
+        verbose_name = _('report module')
+        verbose_name_plural = _('report modules')
 
     def get_absolute_url(self):
         return reverse('extras:report_list')
@@ -47,7 +53,7 @@ class ReportModule(PythonModuleMixin, JobsMixin, ManagedFile):
     def __str__(self):
         return self.python_name
 
-    @cached_property
+    @property
     def reports(self):
 
         def _get_name(cls):
@@ -56,7 +62,8 @@ class ReportModule(PythonModuleMixin, JobsMixin, ManagedFile):
 
         try:
             module = self.get_module()
-        except ImportError:
+        except (ImportError, SyntaxError) as e:
+            logger.error(f"Unable to load report module {self.name}, exception: {e}")
             return {}
         reports = {}
         ordered = getattr(module, 'report_order', [])

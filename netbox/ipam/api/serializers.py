@@ -12,8 +12,9 @@ from netbox.constants import NESTED_SERIALIZER_PREFIX
 from tenancy.api.nested_serializers import NestedTenantSerializer
 from utilities.api import get_serializer_for_model
 from virtualization.api.nested_serializers import NestedVirtualMachineSerializer
+from vpn.api.nested_serializers import NestedL2VPNTerminationSerializer
+from .field_serializers import IPAddressField, IPNetworkField
 from .nested_serializers import *
-from .field_serializers import IPAddressField
 
 
 #
@@ -58,6 +59,7 @@ class AvailableASNSerializer(serializers.Serializer):
     Representation of an ASN which does not exist in the database.
     """
     asn = serializers.IntegerField(read_only=True)
+    description = serializers.CharField(required=False)
 
     def to_representation(self, asn):
         rir = NestedRIRSerializer(self.context['range'].rir, context={
@@ -137,7 +139,7 @@ class AggregateSerializer(NetBoxModelSerializer):
     family = ChoiceField(choices=IPAddressFamilyChoices, read_only=True)
     rir = NestedRIRSerializer()
     tenant = NestedTenantSerializer(required=False, allow_null=True)
-    prefix = serializers.CharField()
+    prefix = IPNetworkField()
 
     class Meta:
         model = Aggregate
@@ -145,7 +147,6 @@ class AggregateSerializer(NetBoxModelSerializer):
             'id', 'url', 'display', 'family', 'prefix', 'rir', 'tenant', 'date_added', 'description', 'comments',
             'tags', 'custom_fields', 'created', 'last_updated',
         ]
-        read_only_fields = ['family']
 
 
 #
@@ -218,12 +219,13 @@ class VLANGroupSerializer(NetBoxModelSerializer):
     scope_id = serializers.IntegerField(allow_null=True, required=False, default=None)
     scope = serializers.SerializerMethodField(read_only=True)
     vlan_count = serializers.IntegerField(read_only=True)
+    utilization = serializers.CharField(read_only=True)
 
     class Meta:
         model = VLANGroup
         fields = [
             'id', 'url', 'display', 'name', 'slug', 'scope_type', 'scope_id', 'scope', 'min_vid', 'max_vid',
-            'description', 'tags', 'custom_fields', 'created', 'last_updated', 'vlan_count',
+            'description', 'tags', 'custom_fields', 'created', 'last_updated', 'vlan_count', 'utilization'
         ]
         validators = []
 
@@ -260,7 +262,7 @@ class AvailableVLANSerializer(serializers.Serializer):
     Representation of a VLAN which does not exist in the database.
     """
     vid = serializers.IntegerField(read_only=True)
-    group = NestedVLANGroupSerializer(read_only=True)
+    group = NestedVLANGroupSerializer(read_only=True, allow_null=True)
 
     def to_representation(self, instance):
         return {
@@ -304,7 +306,7 @@ class PrefixSerializer(NetBoxModelSerializer):
     role = NestedRoleSerializer(required=False, allow_null=True)
     children = serializers.IntegerField(read_only=True)
     _depth = serializers.IntegerField(read_only=True)
-    prefix = serializers.CharField()
+    prefix = IPNetworkField()
 
     class Meta:
         model = Prefix
@@ -313,7 +315,6 @@ class PrefixSerializer(NetBoxModelSerializer):
             'mark_utilized', 'description', 'comments', 'tags', 'custom_fields', 'created', 'last_updated', 'children',
             '_depth',
         ]
-        read_only_fields = ['family']
 
 
 class PrefixLengthSerializer(serializers.Serializer):
@@ -347,9 +348,9 @@ class AvailablePrefixSerializer(serializers.Serializer):
     """
     Representation of a prefix which does not exist in the database.
     """
-    family = serializers.IntegerField(read_only=True)
+    family = serializers.IntegerField(read_only=True, allow_null=True)
     prefix = serializers.CharField(read_only=True)
-    vrf = NestedVRFSerializer(read_only=True)
+    vrf = NestedVRFSerializer(read_only=True, allow_null=True)
 
     def to_representation(self, instance):
         if self.context.get('vrf'):
@@ -384,7 +385,6 @@ class IPRangeSerializer(NetBoxModelSerializer):
             'description', 'comments', 'tags', 'custom_fields', 'created', 'last_updated',
             'mark_utilized', 'description', 'comments', 'tags', 'custom_fields', 'created', 'last_updated',
         ]
-        read_only_fields = ['family']
 
 
 #
@@ -429,9 +429,10 @@ class AvailableIPSerializer(serializers.Serializer):
     """
     Representation of an IP address which does not exist in the database.
     """
-    family = serializers.IntegerField(read_only=True)
+    family = serializers.IntegerField(read_only=True, allow_null=True)
     address = serializers.CharField(read_only=True)
-    vrf = NestedVRFSerializer(read_only=True)
+    vrf = NestedVRFSerializer(read_only=True, allow_null=True)
+    description = serializers.CharField(required=False)
 
     def to_representation(self, instance):
         if self.context.get('vrf'):
@@ -479,54 +480,3 @@ class ServiceSerializer(NetBoxModelSerializer):
             'id', 'url', 'display', 'device', 'virtual_machine', 'name', 'ports', 'protocol', 'ipaddresses',
             'description', 'comments', 'tags', 'custom_fields', 'created', 'last_updated',
         ]
-
-#
-# L2VPN
-#
-
-
-class L2VPNSerializer(NetBoxModelSerializer):
-    url = serializers.HyperlinkedIdentityField(view_name='ipam-api:l2vpn-detail')
-    type = ChoiceField(choices=L2VPNTypeChoices, required=False)
-    import_targets = SerializedPKRelatedField(
-        queryset=RouteTarget.objects.all(),
-        serializer=NestedRouteTargetSerializer,
-        required=False,
-        many=True
-    )
-    export_targets = SerializedPKRelatedField(
-        queryset=RouteTarget.objects.all(),
-        serializer=NestedRouteTargetSerializer,
-        required=False,
-        many=True
-    )
-    tenant = NestedTenantSerializer(required=False, allow_null=True)
-
-    class Meta:
-        model = L2VPN
-        fields = [
-            'id', 'url', 'display', 'identifier', 'name', 'slug', 'type', 'import_targets', 'export_targets',
-            'description', 'comments', 'tenant', 'tags', 'custom_fields', 'created', 'last_updated'
-        ]
-
-
-class L2VPNTerminationSerializer(NetBoxModelSerializer):
-    url = serializers.HyperlinkedIdentityField(view_name='ipam-api:l2vpntermination-detail')
-    l2vpn = NestedL2VPNSerializer()
-    assigned_object_type = ContentTypeField(
-        queryset=ContentType.objects.all()
-    )
-    assigned_object = serializers.SerializerMethodField(read_only=True)
-
-    class Meta:
-        model = L2VPNTermination
-        fields = [
-            'id', 'url', 'display', 'l2vpn', 'assigned_object_type', 'assigned_object_id',
-            'assigned_object', 'tags', 'custom_fields', 'created', 'last_updated'
-        ]
-
-    @extend_schema_field(serializers.JSONField(allow_null=True))
-    def get_assigned_object(self, instance):
-        serializer = get_serializer_for_model(instance.assigned_object, prefix=NESTED_SERIALIZER_PREFIX)
-        context = {'request': self.context['request']}
-        return serializer(instance.assigned_object, context=context).data

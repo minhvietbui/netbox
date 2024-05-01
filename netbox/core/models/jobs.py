@@ -1,9 +1,9 @@
 import uuid
 
 import django_rq
-from django.contrib.auth.models import User
+from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
-from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.urls import reverse
@@ -11,8 +11,9 @@ from django.utils import timezone
 from django.utils.translation import gettext as _
 
 from core.choices import JobStatusChoices
+from core.models import ContentType
+from core.signals import job_end, job_start
 from extras.constants import EVENT_JOB_END, EVENT_JOB_START
-from extras.utils import FeatureQuery
 from netbox.config import get_config
 from netbox.constants import RQ_QUEUE_DEFAULT
 from utilities.querysets import RestrictedQuerySet
@@ -28,9 +29,8 @@ class Job(models.Model):
     Tracks the lifecycle of a job which represents a background task (e.g. the execution of a custom script).
     """
     object_type = models.ForeignKey(
-        to=ContentType,
+        to='contenttypes.ContentType',
         related_name='jobs',
-        limit_choices_to=FeatureQuery('jobs'),
         on_delete=models.CASCADE,
     )
     object_id = models.PositiveBigIntegerField(
@@ -43,48 +43,62 @@ class Job(models.Model):
         for_concrete_model=False
     )
     name = models.CharField(
+        verbose_name=_('name'),
         max_length=200
     )
     created = models.DateTimeField(
+        verbose_name=_('created'),
         auto_now_add=True
     )
     scheduled = models.DateTimeField(
+        verbose_name=_('scheduled'),
         null=True,
         blank=True
     )
     interval = models.PositiveIntegerField(
+        verbose_name=_('interval'),
         blank=True,
         null=True,
         validators=(
             MinValueValidator(1),
         ),
-        help_text=_("Recurrence interval (in minutes)")
+        help_text=_('Recurrence interval (in minutes)')
     )
     started = models.DateTimeField(
+        verbose_name=_('started'),
         null=True,
         blank=True
     )
     completed = models.DateTimeField(
+        verbose_name=_('completed'),
         null=True,
         blank=True
     )
     user = models.ForeignKey(
-        to=User,
+        to=settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         related_name='+',
         blank=True,
         null=True
     )
     status = models.CharField(
+        verbose_name=_('status'),
         max_length=30,
         choices=JobStatusChoices,
         default=JobStatusChoices.STATUS_PENDING
     )
     data = models.JSONField(
+        verbose_name=_('data'),
         null=True,
         blank=True
     )
+    error = models.TextField(
+        verbose_name=_('error'),
+        editable=False,
+        blank=True
+    )
     job_id = models.UUIDField(
+        verbose_name=_('job ID'),
         unique=True
     )
 
@@ -92,6 +106,11 @@ class Job(models.Model):
 
     class Meta:
         ordering = ['-created']
+        indexes = (
+            models.Index(fields=('object_type', 'object_id')),
+        )
+        verbose_name = _('job')
+        verbose_name_plural = _('jobs')
 
     def __str__(self):
         return str(self.job_id)
@@ -106,6 +125,15 @@ class Job(models.Model):
 
     def get_status_color(self):
         return JobStatusChoices.colors.get(self.status)
+
+    def clean(self):
+        super().clean()
+
+        # Validate the assigned object type
+        if self.object_type not in ContentType.objects.with_feature('jobs'):
+            raise ValidationError(
+                _("Jobs cannot be assigned to this object type ({type}).").format(type=self.object_type)
+            )
 
     @property
     def duration(self):
@@ -144,24 +172,30 @@ class Job(models.Model):
         self.status = JobStatusChoices.STATUS_RUNNING
         self.save()
 
-        # Handle webhooks
-        self.trigger_webhooks(event=EVENT_JOB_START)
+        # Send signal
+        job_start.send(self)
 
-    def terminate(self, status=JobStatusChoices.STATUS_COMPLETED):
+    def terminate(self, status=JobStatusChoices.STATUS_COMPLETED, error=None):
         """
         Mark the job as completed, optionally specifying a particular termination status.
         """
         valid_statuses = JobStatusChoices.TERMINAL_STATE_CHOICES
         if status not in valid_statuses:
-            raise ValueError(f"Invalid status for job termination. Choices are: {', '.join(valid_statuses)}")
+            raise ValueError(
+                _("Invalid status for job termination. Choices are: {choices}").format(
+                    choices=', '.join(valid_statuses)
+                )
+            )
 
         # Mark the job as completed
         self.status = status
+        if error:
+            self.error = error
         self.completed = timezone.now()
         self.save()
 
-        # Handle webhooks
-        self.trigger_webhooks(event=EVENT_JOB_END)
+        # Send signal
+        job_end.send(self)
 
     @classmethod
     def enqueue(cls, func, instance, name='', user=None, schedule_at=None, interval=None, **kwargs):
@@ -197,27 +231,3 @@ class Job(models.Model):
             queue.enqueue(func, job_id=str(job.job_id), job=job, **kwargs)
 
         return job
-
-    def trigger_webhooks(self, event):
-        from extras.models import Webhook
-
-        rq_queue_name = get_config().QUEUE_MAPPINGS.get('webhook', RQ_QUEUE_DEFAULT)
-        rq_queue = django_rq.get_queue(rq_queue_name, is_async=False)
-
-        # Fetch any webhooks matching this object type and action
-        webhooks = Webhook.objects.filter(
-            **{f'type_{event}': True},
-            content_types=self.object_type,
-            enabled=True
-        )
-
-        for webhook in webhooks:
-            rq_queue.enqueue(
-                "extras.webhooks_worker.process_webhook",
-                webhook=webhook,
-                model_name=self.object_type.model,
-                event=event,
-                data=self.data,
-                timestamp=str(timezone.now()),
-                username=self.user.username
-            )

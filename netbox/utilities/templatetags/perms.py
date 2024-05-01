@@ -1,5 +1,7 @@
 from django import template
 
+from utilities.permissions import get_permission_for_model
+
 __all__ = (
     'can_add',
     'can_change',
@@ -12,10 +14,8 @@ register = template.Library()
 
 
 def _check_permission(user, instance, action):
-    return user.has_perm(
-        perm=f'{instance._meta.app_label}.{action}_{instance._meta.model_name}',
-        obj=instance
-    )
+    permission = get_permission_for_model(instance, action)
+    return user.has_perm(perm=permission, obj=instance)
 
 
 @register.filter()
@@ -24,8 +24,9 @@ def can_view(user, instance):
 
 
 @register.filter()
-def can_add(user, instance):
-    return _check_permission(user, instance, 'add')
+def can_add(user, model):
+    permission = get_permission_for_model(model, 'add')
+    return user.has_perm(perm=permission)
 
 
 @register.filter()

@@ -1,8 +1,34 @@
 from django.contrib.contenttypes.models import ContentType
-from django.db.models import Q
+from django.db.models import Count, F, OuterRef, Q, Subquery, Value
 from django.db.models.expressions import RawSQL
+from django.db.models.functions import Round
 
 from utilities.querysets import RestrictedQuerySet
+from utilities.utils import count_related
+
+__all__ = (
+    'ASNRangeQuerySet',
+    'PrefixQuerySet',
+    'VLANQuerySet',
+)
+
+
+class ASNRangeQuerySet(RestrictedQuerySet):
+
+    def annotate_asn_counts(self):
+        """
+        Annotate the number of ASNs which appear within each range.
+        """
+        from .models import ASN
+
+        # Because ASN does not have a foreign key to ASNRange, we create a fake column "_" with a consistent value
+        # that we can use to count ASNs and return a single value per ASNRange.
+        asns = ASN.objects.filter(
+            asn__gte=OuterRef('start'),
+            asn__lte=OuterRef('end')
+        ).order_by().annotate(_=Value(1)).values('_').annotate(c=Count('*')).values('c')
+
+        return self.annotate(asn_count=Subquery(asns))
 
 
 class PrefixQuerySet(RestrictedQuerySet):
@@ -30,7 +56,47 @@ class PrefixQuerySet(RestrictedQuerySet):
         )
 
 
+class VLANGroupQuerySet(RestrictedQuerySet):
+
+    def annotate_utilization(self):
+        from .models import VLAN
+
+        return self.annotate(
+            vlan_count=count_related(VLAN, 'group'),
+            utilization=Round(F('vlan_count') / (F('max_vid') - F('min_vid') + 1.0) * 100, 2)
+        )
+
+
 class VLANQuerySet(RestrictedQuerySet):
+
+    def get_for_site(self, site):
+        """
+        Return all VLANs in the specified site
+        """
+        from .models import VLANGroup
+        q = Q()
+        q |= Q(
+            scope_type=ContentType.objects.get_by_natural_key('dcim', 'site'),
+            scope_id=site.pk
+        )
+
+        if site.region:
+            q |= Q(
+                scope_type=ContentType.objects.get_by_natural_key('dcim', 'region'),
+                scope_id__in=site.region.get_ancestors(include_self=True)
+            )
+        if site.group:
+            q |= Q(
+                scope_type=ContentType.objects.get_by_natural_key('dcim', 'sitegroup'),
+                scope_id__in=site.group.get_ancestors(include_self=True)
+            )
+
+        return self.filter(
+            Q(group__in=VLANGroup.objects.filter(q)) |
+            Q(site=site) |
+            Q(group__scope_id__isnull=True, site__isnull=True) |  # Global group VLANs
+            Q(group__isnull=True, site__isnull=True)  # Global VLANs
+        )
 
     def get_for_device(self, device):
         """

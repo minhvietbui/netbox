@@ -1,18 +1,18 @@
 from django.conf import settings
 from django.conf.urls import include
-from django.urls import path, re_path
+from django.urls import path
+from django.views.decorators.cache import cache_page
 from django.views.decorators.csrf import csrf_exempt
 from django.views.static import serve
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 
-from extras.plugins.urls import plugin_admin_patterns, plugin_patterns, plugin_api_patterns
+from account.views import LoginView, LogoutView
 from netbox.api.views import APIRootView, StatusView
 from netbox.graphql.schema import schema
 from netbox.graphql.views import GraphQLView
+from netbox.plugins.urls import plugin_admin_patterns, plugin_patterns, plugin_api_patterns
 from netbox.views import HomeView, StaticMediaFailureView, SearchView, htmx
-from users.views import LoginView, LogoutView
 from .admin import admin_site
-
 
 _patterns = [
 
@@ -32,9 +32,13 @@ _patterns = [
     path('extras/', include('extras.urls')),
     path('ipam/', include('ipam.urls')),
     path('tenancy/', include('tenancy.urls')),
-    path('user/', include('users.urls')),
+    path('users/', include('users.urls')),
     path('virtualization/', include('virtualization.urls')),
+    path('vpn/', include('vpn.urls')),
     path('wireless/', include('wireless.urls')),
+
+    # Current user views
+    path('user/', include('account.urls')),
 
     # HTMX views
     path('htmx/object-selector/', htmx.ObjectSelectorView.as_view(), name='htmx_object_selector'),
@@ -49,10 +53,17 @@ _patterns = [
     path('api/tenancy/', include('tenancy.api.urls')),
     path('api/users/', include('users.api.urls')),
     path('api/virtualization/', include('virtualization.api.urls')),
+    path('api/vpn/', include('vpn.api.urls')),
     path('api/wireless/', include('wireless.api.urls')),
     path('api/status/', StatusView.as_view(), name='api-status'),
 
-    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path(
+        "api/schema/",
+        cache_page(timeout=86400, key_prefix=f"api_schema_{settings.VERSION}")(
+            SpectacularAPIView.as_view()
+        ),
+        name="schema",
+    ),
     path('api/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='api_docs'),
     path('api/schema/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='api_redocs'),
 

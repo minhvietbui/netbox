@@ -7,6 +7,7 @@ from django.contrib.auth.backends import ModelBackend, RemoteUserBackend as _Rem
 from django.contrib.auth.models import Group, AnonymousUser
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Q
+from django.utils.translation import gettext_lazy as _
 
 from users.constants import CONSTRAINT_TOKEN_USER
 from users.models import ObjectPermission
@@ -42,6 +43,7 @@ AUTH_BACKEND_ATTRS = {
     'hubspot': ('HubSpot', 'hubspot'),
     'keycloak': ('Keycloak', None),
     'microsoft-graph': ('Microsoft Graph', 'microsoft'),
+    'oidc': ('OpenID Connect', None),
     'okta': ('Okta', None),
     'okta-openidconnect': ('Okta (OIDC)', None),
     'salesforce-oauth2': ('Salesforce', 'salesforce'),
@@ -76,6 +78,18 @@ class ObjectPermissionMixin:
         """
         Return all permissions granted to the user by an ObjectPermission.
         """
+        # Initialize a dictionary mapping permission names to sets of constraints
+        perms = defaultdict(list)
+
+        # Collect any configured default permissions
+        for perm_name, constraints in settings.DEFAULT_PERMISSIONS.items():
+            constraints = constraints or tuple()
+            if type(constraints) not in (list, tuple):
+                raise ImproperlyConfigured(
+                    f"Constraints for default permission {perm_name} must be defined as a list or tuple."
+                )
+            perms[perm_name].extend(constraints)
+
         # Retrieve all assigned and enabled ObjectPermissions
         object_permissions = ObjectPermission.objects.filter(
             self.get_permission_filter(user_obj),
@@ -83,7 +97,6 @@ class ObjectPermissionMixin:
         ).order_by('id').distinct('id').prefetch_related('object_types')
 
         # Create a dictionary mapping permissions to their constraints
-        perms = defaultdict(list)
         for obj_perm in object_permissions:
             for object_type in obj_perm.object_types.all():
                 for action in obj_perm.actions:
@@ -119,9 +132,11 @@ class ObjectPermissionMixin:
             return True
 
         # Sanity check: Ensure that the requested permission applies to the specified object
-        model = obj._meta.model
+        model = obj._meta.concrete_model
         if model._meta.label_lower != '.'.join((app_label, model_name)):
-            raise ValueError(f"Invalid permission {perm} for model {model}")
+            raise ValueError(_("Invalid permission {permission} for model {model}").format(
+                permission=perm, model=model
+            ))
 
         # Compile a QuerySet filter that matches all instances of the specified model
         tokens = {
@@ -156,8 +171,11 @@ class RemoteUserBackend(_RemoteUserBackend):
             try:
                 group_list.append(Group.objects.get(name=name))
             except Group.DoesNotExist:
-                logging.error(
-                    f"Could not assign group {name} to remotely-authenticated user {user}: Group not found")
+                if settings.REMOTE_AUTH_AUTO_CREATE_GROUPS:
+                    group_list.append(Group.objects.create(name=name))
+                else:
+                    logging.error(
+                        f"Could not assign group {name} to remotely-authenticated user {user}: Group not found")
         if group_list:
             user.groups.set(group_list)
             logger.debug(

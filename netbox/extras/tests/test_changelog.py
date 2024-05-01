@@ -1,11 +1,12 @@
 from django.contrib.contenttypes.models import ContentType
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 
 from dcim.choices import SiteStatusChoices
 from dcim.models import Site
 from extras.choices import *
-from extras.models import CustomField, ObjectChange, Tag
+from extras.models import CustomField, CustomFieldChoiceSet, ObjectChange, Tag
 from utilities.testing import APITestCase
 from utilities.testing.utils import create_tags, post_data
 from utilities.testing.views import ModelViewTestCase
@@ -16,12 +17,16 @@ class ChangeLogViewTest(ModelViewTestCase):
 
     @classmethod
     def setUpTestData(cls):
+        choice_set = CustomFieldChoiceSet.objects.create(
+            name='Choice Set 1',
+            extra_choices=(('foo', 'Foo'), ('bar', 'Bar'))
+        )
 
         # Create a custom field on the Site model
         ct = ContentType.objects.get_for_model(Site)
         cf = CustomField(
             type=CustomFieldTypeChoices.TYPE_TEXT,
-            name='my_field',
+            name='cf1',
             required=False
         )
         cf.save()
@@ -30,9 +35,9 @@ class ChangeLogViewTest(ModelViewTestCase):
         # Create a select custom field on the Site model
         cf_select = CustomField(
             type=CustomFieldTypeChoices.TYPE_SELECT,
-            name='my_field_select',
+            name='cf2',
             required=False,
-            choices=['Bar', 'Foo']
+            choice_set=choice_set
         )
         cf_select.save()
         cf_select.content_types.set([ct])
@@ -43,8 +48,8 @@ class ChangeLogViewTest(ModelViewTestCase):
             'name': 'Site 1',
             'slug': 'site-1',
             'status': SiteStatusChoices.STATUS_ACTIVE,
-            'cf_my_field': 'ABC',
-            'cf_my_field_select': 'Bar',
+            'cf_cf1': 'ABC',
+            'cf_cf2': 'bar',
             'tags': [tag.pk for tag in tags],
         }
 
@@ -65,8 +70,8 @@ class ChangeLogViewTest(ModelViewTestCase):
         self.assertEqual(oc.changed_object, site)
         self.assertEqual(oc.action, ObjectChangeActionChoices.ACTION_CREATE)
         self.assertEqual(oc.prechange_data, None)
-        self.assertEqual(oc.postchange_data['custom_fields']['my_field'], form_data['cf_my_field'])
-        self.assertEqual(oc.postchange_data['custom_fields']['my_field_select'], form_data['cf_my_field_select'])
+        self.assertEqual(oc.postchange_data['custom_fields']['cf1'], form_data['cf_cf1'])
+        self.assertEqual(oc.postchange_data['custom_fields']['cf2'], form_data['cf_cf2'])
         self.assertEqual(oc.postchange_data['tags'], ['Tag 1', 'Tag 2'])
 
     def test_update_object(self):
@@ -79,8 +84,8 @@ class ChangeLogViewTest(ModelViewTestCase):
             'name': 'Site X',
             'slug': 'site-x',
             'status': SiteStatusChoices.STATUS_PLANNED,
-            'cf_my_field': 'DEF',
-            'cf_my_field_select': 'Foo',
+            'cf_cf1': 'DEF',
+            'cf_cf2': 'foo',
             'tags': [tags[2].pk],
         }
 
@@ -102,8 +107,8 @@ class ChangeLogViewTest(ModelViewTestCase):
         self.assertEqual(oc.action, ObjectChangeActionChoices.ACTION_UPDATE)
         self.assertEqual(oc.prechange_data['name'], 'Site 1')
         self.assertEqual(oc.prechange_data['tags'], ['Tag 1', 'Tag 2'])
-        self.assertEqual(oc.postchange_data['custom_fields']['my_field'], form_data['cf_my_field'])
-        self.assertEqual(oc.postchange_data['custom_fields']['my_field_select'], form_data['cf_my_field_select'])
+        self.assertEqual(oc.postchange_data['custom_fields']['cf1'], form_data['cf_cf1'])
+        self.assertEqual(oc.postchange_data['custom_fields']['cf2'], form_data['cf_cf2'])
         self.assertEqual(oc.postchange_data['tags'], ['Tag 3'])
 
     def test_delete_object(self):
@@ -111,8 +116,8 @@ class ChangeLogViewTest(ModelViewTestCase):
             name='Site 1',
             slug='site-1',
             custom_field_data={
-                'my_field': 'ABC',
-                'my_field_select': 'Bar'
+                'cf1': 'ABC',
+                'cf2': 'Bar'
             }
         )
         site.save()
@@ -131,8 +136,8 @@ class ChangeLogViewTest(ModelViewTestCase):
         self.assertEqual(oc.changed_object, None)
         self.assertEqual(oc.object_repr, site.name)
         self.assertEqual(oc.action, ObjectChangeActionChoices.ACTION_DELETE)
-        self.assertEqual(oc.prechange_data['custom_fields']['my_field'], 'ABC')
-        self.assertEqual(oc.prechange_data['custom_fields']['my_field_select'], 'Bar')
+        self.assertEqual(oc.prechange_data['custom_fields']['cf1'], 'ABC')
+        self.assertEqual(oc.prechange_data['custom_fields']['cf2'], 'Bar')
         self.assertEqual(oc.prechange_data['tags'], ['Tag 1', 'Tag 2'])
         self.assertEqual(oc.postchange_data, None)
 
@@ -203,6 +208,66 @@ class ChangeLogViewTest(ModelViewTestCase):
         self.assertEqual(objectchange.prechange_data['slug'], sites[0].slug)
         self.assertEqual(objectchange.postchange_data, None)
 
+    @override_settings(CHANGELOG_SKIP_EMPTY_CHANGES=False)
+    def test_update_object_change(self):
+        # Create a Site
+        site = Site.objects.create(
+            name='Site 1',
+            slug='site-1',
+            status=SiteStatusChoices.STATUS_PLANNED,
+            custom_field_data={
+                'cf1': None,
+                'cf2': None
+            }
+        )
+
+        # Update it with the same field values
+        form_data = {
+            'name': site.name,
+            'slug': site.slug,
+            'status': SiteStatusChoices.STATUS_PLANNED,
+        }
+        request = {
+            'path': self._get_url('edit', instance=site),
+            'data': post_data(form_data),
+        }
+        self.add_permissions('dcim.change_site', 'extras.view_tag')
+        response = self.client.post(**request)
+        self.assertHttpStatus(response, 302)
+
+        # Check that an ObjectChange record has been created
+        self.assertEqual(ObjectChange.objects.count(), 1)
+
+    @override_settings(CHANGELOG_SKIP_EMPTY_CHANGES=True)
+    def test_update_object_nochange(self):
+        # Create a Site
+        site = Site.objects.create(
+            name='Site 1',
+            slug='site-1',
+            status=SiteStatusChoices.STATUS_PLANNED,
+            custom_field_data={
+                'cf1': None,
+                'cf2': None
+            }
+        )
+
+        # Update it with the same field values
+        form_data = {
+            'name': site.name,
+            'slug': site.slug,
+            'status': SiteStatusChoices.STATUS_PLANNED,
+        }
+        request = {
+            'path': self._get_url('edit', instance=site),
+            'data': post_data(form_data),
+        }
+        self.add_permissions('dcim.change_site', 'extras.view_tag')
+        response = self.client.post(**request)
+        self.assertHttpStatus(response, 302)
+
+        # Check that no ObjectChange records have been created
+        self.assertEqual(ObjectChange.objects.count(), 0)
+
 
 class ChangeLogAPITest(APITestCase):
 
@@ -213,18 +278,22 @@ class ChangeLogAPITest(APITestCase):
         ct = ContentType.objects.get_for_model(Site)
         cf = CustomField(
             type=CustomFieldTypeChoices.TYPE_TEXT,
-            name='my_field',
+            name='cf1',
             required=False
         )
         cf.save()
         cf.content_types.set([ct])
 
         # Create a select custom field on the Site model
+        choice_set = CustomFieldChoiceSet.objects.create(
+            name='Choice Set 1',
+            extra_choices=(('foo', 'Foo'), ('bar', 'Bar'))
+        )
         cf_select = CustomField(
             type=CustomFieldTypeChoices.TYPE_SELECT,
-            name='my_field_select',
+            name='cf2',
             required=False,
-            choices=['Bar', 'Foo']
+            choice_set=choice_set
         )
         cf_select.save()
         cf_select.content_types.set([ct])
@@ -242,8 +311,8 @@ class ChangeLogAPITest(APITestCase):
             'name': 'Site 1',
             'slug': 'site-1',
             'custom_fields': {
-                'my_field': 'ABC',
-                'my_field_select': 'Bar',
+                'cf1': 'ABC',
+                'cf2': 'bar',
             },
             'tags': [
                 {'name': 'Tag 1'},
@@ -276,8 +345,8 @@ class ChangeLogAPITest(APITestCase):
             'name': 'Site X',
             'slug': 'site-x',
             'custom_fields': {
-                'my_field': 'DEF',
-                'my_field_select': 'Foo',
+                'cf1': 'DEF',
+                'cf2': 'foo',
             },
             'tags': [
                 {'name': 'Tag 3'}
@@ -305,8 +374,8 @@ class ChangeLogAPITest(APITestCase):
             name='Site 1',
             slug='site-1',
             custom_field_data={
-                'my_field': 'ABC',
-                'my_field_select': 'Bar'
+                'cf1': 'ABC',
+                'cf2': 'Bar'
             }
         )
         site.save()
@@ -323,8 +392,8 @@ class ChangeLogAPITest(APITestCase):
         self.assertEqual(oc.changed_object, None)
         self.assertEqual(oc.object_repr, site.name)
         self.assertEqual(oc.action, ObjectChangeActionChoices.ACTION_DELETE)
-        self.assertEqual(oc.prechange_data['custom_fields']['my_field'], 'ABC')
-        self.assertEqual(oc.prechange_data['custom_fields']['my_field_select'], 'Bar')
+        self.assertEqual(oc.prechange_data['custom_fields']['cf1'], 'ABC')
+        self.assertEqual(oc.prechange_data['custom_fields']['cf2'], 'Bar')
         self.assertEqual(oc.prechange_data['tags'], ['Tag 1', 'Tag 2'])
         self.assertEqual(oc.postchange_data, None)
 

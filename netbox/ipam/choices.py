@@ -1,3 +1,5 @@
+from django.utils.translation import gettext_lazy as _
+
 from utilities.choices import ChoiceSet
 
 
@@ -25,10 +27,10 @@ class PrefixStatusChoices(ChoiceSet):
     STATUS_DEPRECATED = 'deprecated'
 
     CHOICES = [
-        (STATUS_CONTAINER, 'Container', 'gray'),
-        (STATUS_ACTIVE, 'Active', 'blue'),
-        (STATUS_RESERVED, 'Reserved', 'cyan'),
-        (STATUS_DEPRECATED, 'Deprecated', 'red'),
+        (STATUS_CONTAINER, _('Container'), 'gray'),
+        (STATUS_ACTIVE, _('Active'), 'blue'),
+        (STATUS_RESERVED, _('Reserved'), 'cyan'),
+        (STATUS_DEPRECATED, _('Deprecated'), 'red'),
     ]
 
 
@@ -44,9 +46,9 @@ class IPRangeStatusChoices(ChoiceSet):
     STATUS_DEPRECATED = 'deprecated'
 
     CHOICES = [
-        (STATUS_ACTIVE, 'Active', 'blue'),
-        (STATUS_RESERVED, 'Reserved', 'cyan'),
-        (STATUS_DEPRECATED, 'Deprecated', 'red'),
+        (STATUS_ACTIVE, _('Active'), 'blue'),
+        (STATUS_RESERVED, _('Reserved'), 'cyan'),
+        (STATUS_DEPRECATED, _('Deprecated'), 'red'),
     ]
 
 
@@ -64,11 +66,11 @@ class IPAddressStatusChoices(ChoiceSet):
     STATUS_SLAAC = 'slaac'
 
     CHOICES = [
-        (STATUS_ACTIVE, 'Active', 'blue'),
-        (STATUS_RESERVED, 'Reserved', 'cyan'),
-        (STATUS_DEPRECATED, 'Deprecated', 'red'),
-        (STATUS_DHCP, 'DHCP', 'green'),
-        (STATUS_SLAAC, 'SLAAC', 'purple'),
+        (STATUS_ACTIVE, _('Active'), 'blue'),
+        (STATUS_RESERVED, _('Reserved'), 'cyan'),
+        (STATUS_DEPRECATED, _('Deprecated'), 'red'),
+        (STATUS_DHCP, _('DHCP'), 'green'),
+        (STATUS_SLAAC, _('SLAAC'), 'purple'),
     ]
 
 
@@ -84,9 +86,9 @@ class IPAddressRoleChoices(ChoiceSet):
     ROLE_CARP = 'carp'
 
     CHOICES = (
-        (ROLE_LOOPBACK, 'Loopback', 'gray'),
-        (ROLE_SECONDARY, 'Secondary', 'blue'),
-        (ROLE_ANYCAST, 'Anycast', 'yellow'),
+        (ROLE_LOOPBACK, _('Loopback'), 'gray'),
+        (ROLE_SECONDARY, _('Secondary'), 'blue'),
+        (ROLE_ANYCAST, _('Anycast'), 'yellow'),
         (ROLE_VIP, 'VIP', 'purple'),
         (ROLE_VRRP, 'VRRP', 'green'),
         (ROLE_HSRP, 'HSRP', 'green'),
@@ -110,15 +112,15 @@ class FHRPGroupProtocolChoices(ChoiceSet):
     PROTOCOL_OTHER = 'other'
 
     CHOICES = (
-        ('Standard', (
+        (_('Standard'), (
             (PROTOCOL_VRRP2, 'VRRPv2'),
             (PROTOCOL_VRRP3, 'VRRPv3'),
             (PROTOCOL_CARP, 'CARP'),
         )),
-        ('CheckPoint', (
+        (_('CheckPoint'), (
             (PROTOCOL_CLUSTERXL, 'ClusterXL'),
         )),
-        ('Cisco', (
+        (_('Cisco'), (
             (PROTOCOL_HSRP, 'HSRP'),
             (PROTOCOL_GLBP, 'GLBP'),
         )),
@@ -132,7 +134,7 @@ class FHRPGroupAuthTypeChoices(ChoiceSet):
     AUTHENTICATION_MD5 = 'md5'
 
     CHOICES = (
-        (AUTHENTICATION_PLAINTEXT, 'Plaintext'),
+        (AUTHENTICATION_PLAINTEXT, _('Plaintext')),
         (AUTHENTICATION_MD5, 'MD5'),
     )
 
@@ -149,9 +151,9 @@ class VLANStatusChoices(ChoiceSet):
     STATUS_DEPRECATED = 'deprecated'
 
     CHOICES = [
-        (STATUS_ACTIVE, 'Active', 'blue'),
-        (STATUS_RESERVED, 'Reserved', 'cyan'),
-        (STATUS_DEPRECATED, 'Deprecated', 'red'),
+        (STATUS_ACTIVE, _('Active'), 'blue'),
+        (STATUS_RESERVED, _('Reserved'), 'cyan'),
+        (STATUS_DEPRECATED, _('Deprecated'), 'red'),
     ]
 
 
@@ -169,53 +171,4 @@ class ServiceProtocolChoices(ChoiceSet):
         (PROTOCOL_TCP, 'TCP'),
         (PROTOCOL_UDP, 'UDP'),
         (PROTOCOL_SCTP, 'SCTP'),
-    )
-
-
-class L2VPNTypeChoices(ChoiceSet):
-    TYPE_VPLS = 'vpls'
-    TYPE_VPWS = 'vpws'
-    TYPE_EPL = 'epl'
-    TYPE_EVPL = 'evpl'
-    TYPE_EPLAN = 'ep-lan'
-    TYPE_EVPLAN = 'evp-lan'
-    TYPE_EPTREE = 'ep-tree'
-    TYPE_EVPTREE = 'evp-tree'
-    TYPE_VXLAN = 'vxlan'
-    TYPE_VXLAN_EVPN = 'vxlan-evpn'
-    TYPE_MPLS_EVPN = 'mpls-evpn'
-    TYPE_PBB_EVPN = 'pbb-evpn'
-
-    CHOICES = (
-        ('VPLS', (
-            (TYPE_VPWS, 'VPWS'),
-            (TYPE_VPLS, 'VPLS'),
-        )),
-        ('VXLAN', (
-            (TYPE_VXLAN, 'VXLAN'),
-            (TYPE_VXLAN_EVPN, 'VXLAN-EVPN'),
-        )),
-        ('L2VPN E-VPN', (
-            (TYPE_MPLS_EVPN, 'MPLS EVPN'),
-            (TYPE_PBB_EVPN, 'PBB EVPN'),
-        )),
-        ('E-Line', (
-            (TYPE_EPL, 'EPL'),
-            (TYPE_EVPL, 'EVPL'),
-        )),
-        ('E-LAN', (
-            (TYPE_EPLAN, 'Ethernet Private LAN'),
-            (TYPE_EVPLAN, 'Ethernet Virtual Private LAN'),
-        )),
-        ('E-Tree', (
-            (TYPE_EPTREE, 'Ethernet Private Tree'),
-            (TYPE_EVPTREE, 'Ethernet Virtual Private Tree'),
-        )),
-    )
-
-    P2P = (
-        TYPE_VPWS,
-        TYPE_EPL,
-        TYPE_EPLAN,
-        TYPE_EPTREE
     )

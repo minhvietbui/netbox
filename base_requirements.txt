@@ -2,13 +2,9 @@
 # https://github.com/mozilla/bleach/blob/main/CHANGES
 bleach
 
-# Python client for Amazon AWS API
-# https://github.com/boto/boto3/blob/develop/CHANGELOG.rst
-boto3
-
 # The Python web framework on which NetBox is built
 # https://docs.djangoproject.com/en/stable/releases/
-Django<4.2
+Django<5.0
 
 # Django middleware which permits cross-domain API requests
 # https://github.com/adamchainz/django-cors-headers/blob/main/CHANGELOG.rst
@@ -27,8 +23,9 @@ django-filter
 django-graphiql-debug-toolbar
 
 # Modified Preorder Tree Traversal (recursive nesting of objects)
+# Pinned to 0.14.0; 0.15.0 requires Python 3.9+
 # https://github.com/django-mptt/django-mptt/blob/main/CHANGELOG.rst
-django-mptt
+django-mptt==0.14.0
 
 # Context managers for PostgreSQL advisory locks
 # https://github.com/Xof/django-pglocks/blob/master/CHANGES.txt
@@ -64,7 +61,8 @@ django-timezone-field
 
 # A REST API framework for Django projects
 # https://www.django-rest-framework.org/community/release-notes/
-djangorestframework
+# Pinned to 3.14 for NetBox v3.7
+djangorestframework<3.15
 
 # Sane and flexible OpenAPI 3 schema generation for Django REST framework.
 # https://github.com/tfranzel/drf-spectacular/blob/master/CHANGELOG.rst
@@ -74,17 +72,14 @@ drf-spectacular
 # https://github.com/tfranzel/drf-spectacular-sidecar
 drf-spectacular-sidecar
 
-# Git client for file sync
-# https://github.com/jelmer/dulwich/releases
-dulwich
-
 # RSS feed parser
 # https://github.com/kurtmckee/feedparser/blob/develop/CHANGELOG.rst
 feedparser
 
 # Django wrapper for Graphene (GraphQL support)
 # https://github.com/graphql-python/graphene-django/releases
-graphene_django
+# Pinned to v3.0.0 for GraphiQL UI issue (see #12762)
+graphene_django==3.0.0
 
 # WSGI HTTP server
 # https://docs.gunicorn.org/en/latest/news.html
@@ -95,9 +90,8 @@ gunicorn
 Jinja2
 
 # Simple markup language for rendering HTML
-# https://python-markdown.github.io/change_log/
-# mkdocs currently requires Markdown v3.3
-Markdown<3.4
+# https://python-markdown.github.io/changelog/
+Markdown
 
 # File inclusion plugin for Python-Markdown
 # https://github.com/cmacmackin/markdown-include
@@ -108,11 +102,11 @@ markdown-include
 mkdocs-material
 
 # Introspection for embedded code
-# https://github.com/mkdocstrings/mkdocstrings/blob/master/CHANGELOG.md
+# https://github.com/mkdocstrings/mkdocstrings/blob/main/CHANGELOG.md
 mkdocstrings[python-legacy]
 
 # Library for manipulating IP prefixes and addresses
-# https://github.com/netaddr/netaddr/blob/master/CHANGELOG
+# https://github.com/netaddr/netaddr/blob/master/CHANGELOG.rst
 netaddr
 
 # Fork of PIL (Python Imaging Library) for image processing
@@ -120,16 +114,16 @@ netaddr
 Pillow
 
 # PostgreSQL database adapter for Python
-# https://www.psycopg.org/docs/news.html
-psycopg2-binary
+# https://github.com/psycopg/psycopg/blob/master/docs/news.rst
+psycopg[binary,pool]
 
 # YAML rendering library
 # https://github.com/yaml/pyyaml/blob/master/CHANGES
 PyYAML
 
-# Sentry SDK
-# https://github.com/getsentry/sentry-python/blob/master/CHANGELOG.md
-sentry-sdk
+# Requests
+# https://github.com/psf/requests/blob/main/HISTORY.md
+requests
 
 # Social authentication framework
 # https://github.com/python-social-auth/social-core/blob/master/CHANGELOG.md
